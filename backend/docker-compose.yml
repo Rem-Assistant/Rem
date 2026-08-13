@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    container_name: remclaw-backend-db
+    environment:
+      POSTGRES_USER: remclaw
+      POSTGRES_PASSWORD: remclaw
+      POSTGRES_DB: remclaw
+    ports:
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U remclaw -d remclaw"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - remclaw_backend_pgdata:/var/lib/postgresql/data
+
+volumes:
+  remclaw_backend_pgdata:

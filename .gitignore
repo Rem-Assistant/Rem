@@ -1,0 +1,99 @@
+# Dependencies and build
+node_modules/
+# pnpm's content-addressable store; carries dangling entries that break Railway's uploader.
+.pnpm-store/
+backend/dist/
+*.log
+.symphony-workspaces/
+symphony-state.json
+
+# Third-party reference checkouts. `_reference/OpenClawTestBed` was a proprietary
+# all-rights-reserved tree (Copyright (c) 2025 Tija) that also carried a git-crypt
+# key and an encrypted secrets file; it was removed from the tree before
+# open-sourcing. Keep local reference checkouts here, but never commit them.
+_reference/
+.worktrees/*/_reference/
+.env
+.env.local
+build/
+
+# Local secret/config overrides. NEVER commit these.
+#
+# The tracked `RemClaw/.env.*.xcconfig` files hold only values that are safe in a public
+# repo — the API base URL, the Google OAuth *client* id (public by design), the IAP product
+# id, and the PostHog `phc_` PROJECT key (a write-only ingestion key meant to ship inside
+# the client app; it is extractable from any distributed build, so it is not a credential).
+#
+# Anything genuinely secret, or any value you want to point at your own account, goes in an
+# untracked `.local.xcconfig` that the tracked file includes if present. That keeps a clone
+# building out of the box while letting a contributor use their own PostHog project or
+# backend without touching tracked files — and without a secret ever reaching a commit.
+RemClaw/*.local.xcconfig
+RemClawMac/*.local.xcconfig
+BuildResults/
+default.profraw
+
+# macOS / Finder noise
+.DS_Store
+**/.DS_Store
+
+# Xcode user-specific state
+*.xcuserdatad/
+*.xcuserstate
+RemClaw.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Graphify knowledge graph output (large, regenerated each run)
+graphify-out/
+graphify-out/cache/
+
+# Ignored docs
+docs/hackathon/epics/epic-00-system-design.md
+
+# Local worktrees and Codex session backups (never track)
+.worktrees/
+.codex-session-backups-*/
+
+# XcodeBuildMCP session defaults — machine/worktree-specific absolute paths.
+.xcodebuildmcp/
+
+# Xcode/SPM build output (DerivedData redirected here; contains embedded git repos)
+.build/
+
+# --- Session/planning notes are kept local, not in the public repo. ---
+# Internal dev-process, planning, rebuild logs, PR evidence, and screenshots.
+# Product docs (architecture overviews, per-folder README.md, deploy overview)
+# stay tracked; the paths below do not re-enter the open-core repo.
+docs/rebuild/
+docs/pr-evidence/
+docs/screenshots/
+docs/release/
+docs/investigations/
+docs/agentbox/
+docs/symphony/
+docs/architecture/epics/
+docs/DEV-ACCOUNTS.md
+docs/LIVEKIT_INVESTIGATION.md
+docs/LOCAL_TESTING.md
+docs/ORCHESTRATION.md
+docs/PEEKABOO_SETUP.md
+docs/PLAN-MAC-COMPATIBILITY.md
+docs/VISUAL_QA.md
+docs/WORKTREES.md
+docs/**/session-transcript-*.md
+docs/**/*-codebase-assessment.md
+docs/architecture/hackathon-plan.md
+docs/product/RELAUNCH_DOGFOOD.md
+docs/product/DECISIONS.md
+docs/product/AI_ORCHESTRATION_CASE_STUDY.md
+docs/ui/AI_FEEDBACK_TRIAGE.md
+# Root dev-process notes
+AI_FAILURE_MODES.md
+APP_STORE_REVIEW_FIXES.md
+BROWSER-CONNECTOR-SPIKE.md
+FILES_CHANGED.md
+IMPLEMENTATION_SUMMARY.md
+HANDOFF.md
+WORKFLOW.md
+LOCAL_SETUP_COMPLETE.md
+# voice-worker (LiveKit Python workers) is not part of the open-core app
+voice-worker/

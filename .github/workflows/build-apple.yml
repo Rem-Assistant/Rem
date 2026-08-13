@@ -1,0 +1,153 @@
+name: Build Apple
+
+# WHY THIS FILE EXISTS
+#
+# Until 2026-08-11 nothing in CI compiled the iOS or Mac app. `build.yml` had exactly one job,
+# `build-backend`, on ubuntu. Every Swift change merged to staging was gated only by human review.
+#
+# What that cost, concretely: PR #1297 deleted the `openclaw` submodule gitlink (a `git add -A`
+# from a worktree that had no submodule). OpenClawKit lives INSIDE that submodule at
+# `openclaw/apps/shared/OpenClawKit`, so the app could not compile at all. It sat on staging across
+# three commits and no check went red. The PR that restored it, #1304, showed a single green check
+# — "Build Backend" — on a pull request whose entire purpose was fixing the iOS build.
+#
+# `submodules: recursive` on the checkout is the specific line that would have caught it.
+#
+# Separate workflow rather than jobs in `build.yml` so these can be path-filtered: macOS runners
+# bill at ~10x linux, and a backend-only PR has no reason to spend one.
+#
+# NOTE IF YOU MAKE THESE REQUIRED CHECKS: a path-filtered workflow reports "missing", not "green",
+# on PRs that don't touch the filtered paths — which will block merges until you add a companion
+# always-runs job that reports success when skipped.
+
+# The two `paths` lists are duplicated on purpose: GitHub Actions does not support YAML anchors,
+# so a `&anchor`/`*alias` pair fails to parse rather than sharing the list. Keep them in sync.
+#
+# ⚠️ COST. macOS runners bill at 10x linux against the included allowance, and these two jobs are
+# ~12 real macOS minutes = ~120 COUNTED minutes per run. On 2026-08-11 this workflow consumed the
+# org's entire 3,000-minute monthly allowance in a single afternoon, and CI stopped assigning
+# runners repo-wide — every branch, including `staging`, failing in 2 seconds with `runner=none`.
+#
+# The multiplier was only half of it. `push: ['**']` and `pull_request: ['**']` BOTH fired on every
+# commit to a PR branch, so each push cost ~240 counted minutes for one commit's worth of
+# information. Measured: `claude/tasks-search-brief-link` had 4 Apple runs, `staging` had 4.
+# 3,000 ÷ 240 ≈ 12 commits. That is the whole month.
+#
+# So: `pull_request` gates every PR on any base (a Swift PR onto a FEATURE base still needs a
+# build — PR #1306 edited Shared/Models/BackgroundSessionFilter.swift onto base
+# `feat/signal-relevance`), and `push` fires ONLY on the integration branches, where it is
+# post-merge verification rather than a duplicate of the PR run.
+#
+# Do not "simplify" push back to ['**'] — it doubles the bill and tells you nothing the
+# pull_request run has not already told you.
+#
+# Paths are literal, not globbed at the root: `**/*.xcodeproj/**` may not match `RemClaw.xcodeproj/…`
+# if `**` requires at least one segment. Name the project directly rather than guess.
+on:
+  push:
+    branches: [staging, main]
+    paths:
+      - 'RemClaw/**'
+      - 'RemClawTests/**'
+      - 'RemClawMacTests/**'
+      - 'RemClawMac/**'
+      - 'RemClawWidget/**'
+      - 'Shared/**'
+      - 'RemClaw.xcodeproj/**'
+      - 'openclaw'
+      - '.gitmodules'
+      - '**/*.entitlements'
+      - '.github/workflows/build-apple.yml'
+  pull_request:
+    # NOT just [main, staging]. A Swift PR onto a FEATURE base gets no build otherwise, and that is
+    # not hypothetical: PR #1306 edits Shared/Models/BackgroundSessionFilter.swift with head
+    # `fix/signal-triage-session-leak` onto base `feat/signal-relevance` — missed by the push filter
+    # (slash) under the old `['*']` and by this filter (base not main/staging). Feature branches are
+    # where the stack is built, so they are exactly where a broken build must not accumulate.
+    branches: ['**']
+    paths:
+      - 'RemClaw/**'
+      - 'RemClawTests/**'
+      - 'RemClawMacTests/**'
+      - 'RemClawMac/**'
+      - 'RemClawWidget/**'
+      - 'Shared/**'
+      - 'RemClaw.xcodeproj/**'
+      - 'openclaw'
+      - '.gitmodules'
+      - '**/*.entitlements'
+      - '.github/workflows/build-apple.yml'
+
+# A newer push to the same branch makes the older run's answer irrelevant. Cancel it rather than
+# paying for a macOS runner to finish computing it.
+concurrency:
+  group: build-apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  build-apple:
+    name: Build ${{ matrix.scheme }}
+    runs-on: macos-latest
+    strategy:
+      # Both platforms ship from this repo, so both must build. Don't let an iOS failure hide a
+      # Mac one — AGENTS.md calls for both-platform builds as delivery discipline.
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: RemClaw
+            destination: 'generic/platform=iOS Simulator'
+          - scheme: RemClawMac
+            destination: 'generic/platform=macOS'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # THE LINE THAT CATCHES #1297. Without it the checkout has no OpenClawKit and every
+          # Swift file importing it fails with "cannot find type in scope".
+          submodules: recursive
+
+      # A missing or unresolved submodule should fail HERE, with a sentence a human can act on,
+      # rather than 40 lines down as six cryptic "cannot find type 'OpenClawChat…'" errors. That
+      # exact confusion cost a wrong diagnosis on 2026-08-11.
+      - name: Verify the openclaw submodule resolved
+        run: |
+          set -euo pipefail
+          if [ ! -f openclaw/apps/shared/OpenClawKit/Package.swift ]; then
+            echo "::error::openclaw submodule did not resolve — OpenClawKit is missing."
+            echo "OpenClawKit lives at openclaw/apps/shared/OpenClawKit and the app cannot compile"
+            echo "without it. Check that the gitlink exists (git ls-tree HEAD openclaw) and that"
+            echo "checkout ran with submodules: recursive."
+            exit 1
+          fi
+          echo "openclaw at $(git -C openclaw rev-parse --short HEAD)"
+
+      # `set -o pipefail` is mandatory: piping xcodebuild through anything makes `$?` the pipe's
+      # status, which has silently masked BUILD FAILED in this repo before. Not piped here, and
+      # kept explicit so it stays true if someone adds `| xcpretty` later.
+      # `build-for-testing`, NOT `build`. Each scheme's BuildAction contains only the .app; the
+      # .xctest bundle is in the TestAction, so plain `build` never compiles RemClawTests/** or
+      # RemClawMacTests/** — a test file that does not compile would merge green, including tests
+      # added specifically to close a gap. `build-for-testing` compiles both and still RUNS
+      # nothing, so no simulator is booted.
+      #
+      # ⚠️ READ THIS BEFORE TRUSTING A GREEN CHECK. Because nothing RUNS, this workflow proves only
+      # that the tests COMPILE. A test whose assertion is simply false is green here, forever. That
+      # is not hypothetical: `MainWindowScreenRouteTests` sat on `staging` with a failing assertion
+      # and nothing went red, and when an agent deleted the entire Mac chat route — replacing it
+      # with `Text("Mac chat is completely broken")` — the suite still passed 22/22 (fixed in #1330).
+      #
+      # Running them costs real money: macOS bills at 10x linux, these two jobs are already ~150
+      # COUNTED minutes per run, and the 3,000-minute monthly allowance was exhausted in a single
+      # afternoon on 2026-08-11. If you add execution, put it on `push` to the integration branches
+      # ONLY — never on `pull_request` — so a regression is caught within one merge at one run's
+      # cost, rather than one run per PR. Tracked as task #43.
+      - name: Build ${{ matrix.scheme }} (app + test targets)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project RemClaw.xcodeproj \
+            -scheme "${{ matrix.scheme }}" \
+            -destination "${{ matrix.destination }}" \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing

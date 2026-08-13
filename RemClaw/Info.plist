@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Rem</string>
+	<key>CFBundleDisplayName</key>
+	<string>Rem</string>
+	<key>APIBaseURL</key>
+	<string>$(API_BASE_URL)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>samatwork.RemClaw</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>remclaw</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+	</array>
+	<key>GIDClientID</key>
+	<string>$(GOOGLE_CLIENT_ID)</string>
+	<key>IAPProProductID</key>
+	<string>$(IAP_PRO_PRODUCT_ID)</string>
+	<key>PostHogApiKey</key>
+	<string>$(POSTHOG_API_KEY)</string>
+	<key>PostHogHost</key>
+	<string>$(POSTHOG_HOST)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Rem uses local network access to find your gateway running on this Wi-Fi (e.g. your Mac), so you can connect without going through the cloud.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_openclaw-gw._tcp</string>
+	</array>
+</dict>
+</plist>

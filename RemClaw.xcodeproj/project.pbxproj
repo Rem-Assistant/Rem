@@ -1,0 +1,1316 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7784CE1C2F39942D00798D53 /* OpenClawChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 7784CE1B2F39942D00798D53 /* OpenClawChatUI */; };
+		7784CE1E2F39942D00798D53 /* OpenClawKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7784CE1D2F39942D00798D53 /* OpenClawKit */; };
+		7784CE202F39942D00798D53 /* OpenClawProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 7784CE1F2F39942D00798D53 /* OpenClawProtocol */; };
+		77B1AC0A2F3C5A0100A1B2C3 /* OpenClawChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 77B1AC0D2F3C5A0100A1B2C3 /* OpenClawChatUI */; };
+		77B1AC0B2F3C5A0100A1B2C3 /* OpenClawKit in Frameworks */ = {isa = PBXBuildFile; productRef = 77B1AC0E2F3C5A0100A1B2C3 /* OpenClawKit */; };
+		77B1AC0C2F3C5A0100A1B2C3 /* OpenClawProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 77B1AC0F2F3C5A0100A1B2C3 /* OpenClawProtocol */; };
+		77C1AA012F3D8A0100D1E2F3 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 77C1AA002F3D8A0100D1E2F3 /* GoogleSignIn */; };
+		88A100012F50000100AA0001 /* RemClawWidget.appex in CopyFiles */ = {isa = PBXBuildFile; fileRef = 88A100022F50000100AA0001 /* RemClawWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AA1B2C3D2F5A0B0100E1F2A3 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA1B2C3C2F5A0B0100E1F2A3 /* PostHog */; };
+		CC1D2E3F2F6A0C0100B1C2D3 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CC1D2E3E2F6A0C0100B1C2D3 /* Sparkle */; };
+		D58B9FB62F440AA500933EE5 /* OpenClawChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = D58B9FB52F440AA500933EE5 /* OpenClawChatUI */; };
+		D58B9FB82F440AA500933EE5 /* OpenClawKit in Frameworks */ = {isa = PBXBuildFile; productRef = D58B9FB72F440AA500933EE5 /* OpenClawKit */; };
+		D58B9FBA2F440AA500933EE5 /* OpenClawProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = D58B9FB92F440AA500933EE5 /* OpenClawProtocol */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		777812672F374DFC0003116E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 777812512F374DFA0003116E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 777812582F374DFA0003116E;
+			remoteInfo = RemClaw;
+		};
+		777812712F374DFC0003116E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 777812512F374DFA0003116E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 777812582F374DFA0003116E;
+			remoteInfo = RemClaw;
+		};
+		BEEF00012F87000000000101 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 777812512F374DFA0003116E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 77B1AC032F3C5A0100A1B2C3;
+			remoteInfo = RemClawMac;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		88A1000C2F50000100AA0001 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				88A100012F50000100AA0001 /* RemClawWidget.appex in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		777812592F374DFA0003116E /* RemClaw.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemClaw.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		777812662F374DFC0003116E /* RemClawTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemClawTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		777812702F374DFC0003116E /* RemClawUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemClawUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		77B1AC022F3C5A0100A1B2C3 /* Rem.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rem.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		77B1AC102F3C5B0000A1B2C3 /* RemClawMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RemClawMac.entitlements; sourceTree = "<group>"; };
+		77C1AA022F3D8A0100D1E2F3 /* RemClaw/RemClaw.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RemClaw/RemClaw.Debug.xcconfig; sourceTree = "<group>"; };
+		77C1AA032F3D8A0100D1E2F3 /* RemClaw/RemClaw.Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RemClaw/RemClaw.Release.xcconfig; sourceTree = "<group>"; };
+		88A100022F50000100AA0001 /* RemClawWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RemClawWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA3D4E012F6A0B0100C2D3E4 /* RemClawMac/RemClawMac.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RemClawMac/RemClawMac.Debug.xcconfig; sourceTree = "<group>"; };
+		AA3D4E022F6A0B0100C2D3E5 /* RemClawMac/RemClawMac.Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RemClawMac/RemClawMac.Release.xcconfig; sourceTree = "<group>"; };
+		BEEF00022F87000000000101 /* RemClawMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemClawMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D55FE3DE2F52EABB0079A3F5 /* Rem: AI Personal Assistant.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Rem: AI Personal Assistant.storekit"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		77AABB012F3C6A0100C1D2E4 /* Exceptions for "RemClaw" folder in "RemClaw" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				README.md,
+				RemClaw.Debug.xcconfig,
+				RemClaw.Release.xcconfig,
+				Sources/Gateway/README.md,
+				Sources/Onboarding/README.md,
+				Sources/Screens/README.md,
+				Sources/Services/README.md,
+				Sources/Settings/README.md,
+				Sources/ViewModels/README.md,
+			);
+			target = 777812582F374DFA0003116E /* RemClaw */;
+		};
+		7E28EEF533C84876C0EF6792 /* Exceptions for "RemClawMac" folder in "RemClawMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				README.md,
+				RemClawMac.Debug.xcconfig,
+				RemClawMac.Release.xcconfig,
+				Sources/App/README.md,
+				Sources/Gateway/README.md,
+				Sources/Managers/README.md,
+				Sources/Permissions/README.md,
+				Sources/UI/README.md,
+				Sources/Voice/README.md,
+			);
+			target = 77B1AC032F3C5A0100A1B2C3 /* RemClawMac */;
+		};
+		88A100032F50000100AA0001 /* Exceptions for "RemClawWidget" folder in "RemClawWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 88A100062F50000100AA0001 /* RemClawWidget */;
+		};
+		AA2B3C012F5B0A0100F1A2B3 /* Exceptions for "Shared" folder in "RemClaw" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/README.md,
+				Protocols/README.md,
+				README.md,
+				Services/README.md,
+				Views/README.md,
+			);
+			target = 777812582F374DFA0003116E /* RemClaw */;
+		};
+		AA2B3C022F5B0A0100F1A2B3 /* Exceptions for "Shared" folder in "RemClawMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/README.md,
+				Protocols/README.md,
+				README.md,
+				Services/README.md,
+				Views/README.md,
+			);
+			target = 77B1AC032F3C5A0100A1B2C3 /* RemClawMac */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		7778125B2F374DFA0003116E /* RemClaw */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				77AABB012F3C6A0100C1D2E4 /* Exceptions for "RemClaw" folder in "RemClaw" target */,
+			);
+			path = RemClaw;
+			sourceTree = "<group>";
+		};
+		777812692F374DFC0003116E /* RemClawTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RemClawTests;
+			sourceTree = "<group>";
+		};
+		777812732F374DFC0003116E /* RemClawUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RemClawUITests;
+			sourceTree = "<group>";
+		};
+		77B1AC012F3C5A0100A1B2C3 /* RemClawMac */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7E28EEF533C84876C0EF6792 /* Exceptions for "RemClawMac" folder in "RemClawMac" target */,
+			);
+			path = RemClawMac;
+			sourceTree = "<group>";
+		};
+		88A100042F50000100AA0001 /* RemClawWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				88A100032F50000100AA0001 /* Exceptions for "RemClawWidget" folder in "RemClawWidget" target */,
+			);
+			path = RemClawWidget;
+			sourceTree = "<group>";
+		};
+		AA2B3C032F5B0A0100F1A2B3 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AA2B3C012F5B0A0100F1A2B3 /* Exceptions for "Shared" folder in "RemClaw" target */,
+				AA2B3C022F5B0A0100F1A2B3 /* Exceptions for "Shared" folder in "RemClawMac" target */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		BEEF00032F87000000000101 /* RemClawMacTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RemClawMacTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		777812562F374DFA0003116E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7784CE202F39942D00798D53 /* OpenClawProtocol in Frameworks */,
+				7784CE1E2F39942D00798D53 /* OpenClawKit in Frameworks */,
+				7784CE1C2F39942D00798D53 /* OpenClawChatUI in Frameworks */,
+				D58B9FB62F440AA500933EE5 /* OpenClawChatUI in Frameworks */,
+				D58B9FBA2F440AA500933EE5 /* OpenClawProtocol in Frameworks */,
+				D58B9FB82F440AA500933EE5 /* OpenClawKit in Frameworks */,
+				77C1AA012F3D8A0100D1E2F3 /* GoogleSignIn in Frameworks */,
+				AA1B2C3D2F5A0B0100E1F2A3 /* PostHog in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		777812632F374DFC0003116E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7778126D2F374DFC0003116E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		77B1AC052F3C5A0100A1B2C3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				77B1AC0C2F3C5A0100A1B2C3 /* OpenClawProtocol in Frameworks */,
+				77B1AC0B2F3C5A0100A1B2C3 /* OpenClawKit in Frameworks */,
+				77B1AC0A2F3C5A0100A1B2C3 /* OpenClawChatUI in Frameworks */,
+				CC1D2E3F2F6A0C0100B1C2D3 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		88A100052F50000100AA0001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEEF00042F87000000000101 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		777812502F374DFA0003116E = {
+			isa = PBXGroup;
+			children = (
+				D55FE3DE2F52EABB0079A3F5 /* Rem: AI Personal Assistant.storekit */,
+				77C1AA022F3D8A0100D1E2F3 /* RemClaw/RemClaw.Debug.xcconfig */,
+				77C1AA032F3D8A0100D1E2F3 /* RemClaw/RemClaw.Release.xcconfig */,
+				AA2B3C032F5B0A0100F1A2B3 /* Shared */,
+				7778125B2F374DFA0003116E /* RemClaw */,
+				88A100042F50000100AA0001 /* RemClawWidget */,
+				77B1AC012F3C5A0100A1B2C3 /* RemClawMac */,
+				77B1AC102F3C5B0000A1B2C3 /* RemClawMac.entitlements */,
+				AA3D4E012F6A0B0100C2D3E4 /* RemClawMac/RemClawMac.Debug.xcconfig */,
+				AA3D4E022F6A0B0100C2D3E5 /* RemClawMac/RemClawMac.Release.xcconfig */,
+				777812692F374DFC0003116E /* RemClawTests */,
+				777812732F374DFC0003116E /* RemClawUITests */,
+				BEEF00032F87000000000101 /* RemClawMacTests */,
+				7778125A2F374DFA0003116E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7778125A2F374DFA0003116E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				777812592F374DFA0003116E /* RemClaw.app */,
+				88A100022F50000100AA0001 /* RemClawWidget.appex */,
+				77B1AC022F3C5A0100A1B2C3 /* Rem.app */,
+				777812662F374DFC0003116E /* RemClawTests.xctest */,
+				777812702F374DFC0003116E /* RemClawUITests.xctest */,
+				BEEF00022F87000000000101 /* RemClawMacTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		777812582F374DFA0003116E /* RemClaw */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7778127A2F374DFC0003116E /* Build configuration list for PBXNativeTarget "RemClaw" */;
+			buildPhases = (
+				77D2AA012F4A9B0100C1D2E3 /* Update Local IP (Debug iPhoneOS) */,
+				777812552F374DFA0003116E /* Sources */,
+				777812562F374DFA0003116E /* Frameworks */,
+				88A1000C2F50000100AA0001 /* CopyFiles */,
+				777812572F374DFA0003116E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7778125B2F374DFA0003116E /* RemClaw */,
+				AA2B3C032F5B0A0100F1A2B3 /* Shared */,
+			);
+			name = RemClaw;
+			packageProductDependencies = (
+				7784CE1B2F39942D00798D53 /* OpenClawChatUI */,
+				7784CE1D2F39942D00798D53 /* OpenClawKit */,
+				7784CE1F2F39942D00798D53 /* OpenClawProtocol */,
+				77C1AA002F3D8A0100D1E2F3 /* GoogleSignIn */,
+				AA1B2C3C2F5A0B0100E1F2A3 /* PostHog */,
+				D58B9FB52F440AA500933EE5 /* OpenClawChatUI */,
+				D58B9FB72F440AA500933EE5 /* OpenClawKit */,
+				D58B9FB92F440AA500933EE5 /* OpenClawProtocol */,
+			);
+			productName = RemClaw;
+			productReference = 777812592F374DFA0003116E /* RemClaw.app */;
+			productType = "com.apple.product-type.application";
+		};
+		777812652F374DFC0003116E /* RemClawTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7778127D2F374DFC0003116E /* Build configuration list for PBXNativeTarget "RemClawTests" */;
+			buildPhases = (
+				777812622F374DFC0003116E /* Sources */,
+				777812632F374DFC0003116E /* Frameworks */,
+				777812642F374DFC0003116E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				777812682F374DFC0003116E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				777812692F374DFC0003116E /* RemClawTests */,
+			);
+			name = RemClawTests;
+			packageProductDependencies = (
+			);
+			productName = RemClawTests;
+			productReference = 777812662F374DFC0003116E /* RemClawTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		7778126F2F374DFC0003116E /* RemClawUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 777812802F374DFC0003116E /* Build configuration list for PBXNativeTarget "RemClawUITests" */;
+			buildPhases = (
+				7778126C2F374DFC0003116E /* Sources */,
+				7778126D2F374DFC0003116E /* Frameworks */,
+				7778126E2F374DFC0003116E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				777812722F374DFC0003116E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				777812732F374DFC0003116E /* RemClawUITests */,
+			);
+			name = RemClawUITests;
+			packageProductDependencies = (
+			);
+			productName = RemClawUITests;
+			productReference = 777812702F374DFC0003116E /* RemClawUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		77B1AC032F3C5A0100A1B2C3 /* RemClawMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 77B1AC092F3C5A0100A1B2C3 /* Build configuration list for PBXNativeTarget "RemClawMac" */;
+			buildPhases = (
+				77B1AC042F3C5A0100A1B2C3 /* Sources */,
+				77B1AC052F3C5A0100A1B2C3 /* Frameworks */,
+				77B1AC062F3C5A0100A1B2C3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				77B1AC012F3C5A0100A1B2C3 /* RemClawMac */,
+				AA2B3C032F5B0A0100F1A2B3 /* Shared */,
+			);
+			name = RemClawMac;
+			packageProductDependencies = (
+				77B1AC0D2F3C5A0100A1B2C3 /* OpenClawChatUI */,
+				77B1AC0E2F3C5A0100A1B2C3 /* OpenClawKit */,
+				77B1AC0F2F3C5A0100A1B2C3 /* OpenClawProtocol */,
+				CC1D2E3E2F6A0C0100B1C2D3 /* Sparkle */,
+			);
+			productName = RemClawMac;
+			productReference = 77B1AC022F3C5A0100A1B2C3 /* Rem.app */;
+			productType = "com.apple.product-type.application";
+		};
+		88A100062F50000100AA0001 /* RemClawWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 88A1000B2F50000100AA0001 /* Build configuration list for PBXNativeTarget "RemClawWidget" */;
+			buildPhases = (
+				88A100082F50000100AA0001 /* Sources */,
+				88A100052F50000100AA0001 /* Frameworks */,
+				88A100072F50000100AA0001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				88A100042F50000100AA0001 /* RemClawWidget */,
+			);
+			name = RemClawWidget;
+			packageProductDependencies = (
+			);
+			productName = RemClawWidget;
+			productReference = 88A100022F50000100AA0001 /* RemClawWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		BEEF00082F87000000000101 /* RemClawMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BEEF000D2F87000000000101 /* Build configuration list for PBXNativeTarget "RemClawMacTests" */;
+			buildPhases = (
+				BEEF00052F87000000000101 /* Sources */,
+				BEEF00042F87000000000101 /* Frameworks */,
+				BEEF00062F87000000000101 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BEEF00072F87000000000101 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BEEF00032F87000000000101 /* RemClawMacTests */,
+			);
+			name = RemClawMacTests;
+			packageProductDependencies = (
+			);
+			productName = RemClawMacTests;
+			productReference = BEEF00022F87000000000101 /* RemClawMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		777812512F374DFA0003116E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					777812582F374DFA0003116E = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					777812652F374DFC0003116E = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 777812582F374DFA0003116E;
+					};
+					7778126F2F374DFC0003116E = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 777812582F374DFA0003116E;
+					};
+					77B1AC032F3C5A0100A1B2C3 = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					88A100062F50000100AA0001 = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					BEEF00082F87000000000101 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 77B1AC032F3C5A0100A1B2C3;
+					};
+				};
+			};
+			buildConfigurationList = 777812542F374DFA0003116E /* Build configuration list for PBXProject "RemClaw" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 777812502F374DFA0003116E;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				77C1AA042F3D8A0100D1E2F3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				AA1B2C3E2F5A0B0100E1F2A3 /* XCRemoteSwiftPackageReference "posthog-ios" */,
+				D58B9FB42F440AA500933EE5 /* XCLocalSwiftPackageReference "openclaw/apps/shared/OpenClawKit" */,
+				CC1D2E402F6A0C0100B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7778125A2F374DFA0003116E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				777812582F374DFA0003116E /* RemClaw */,
+				88A100062F50000100AA0001 /* RemClawWidget */,
+				77B1AC032F3C5A0100A1B2C3 /* RemClawMac */,
+				777812652F374DFC0003116E /* RemClawTests */,
+				7778126F2F374DFC0003116E /* RemClawUITests */,
+				BEEF00082F87000000000101 /* RemClawMacTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		777812572F374DFA0003116E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		777812642F374DFC0003116E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7778126E2F374DFC0003116E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		77B1AC062F3C5A0100A1B2C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		88A100072F50000100AA0001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEEF00062F87000000000101 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		77D2AA012F4A9B0100C1D2E3 /* Update Local IP (Debug iPhoneOS) */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/update-local-ip.sh",
+			);
+			name = "Update Local IP (Debug iPhoneOS)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$CONFIGURATION\" = \"Debug\" ]; then\n  if [ -x \"$SRCROOT/scripts/update-local-ip.sh\" ]; then\n    \"$SRCROOT/scripts/update-local-ip.sh\" || true\n  fi\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		777812552F374DFA0003116E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		777812622F374DFC0003116E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7778126C2F374DFC0003116E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		77B1AC042F3C5A0100A1B2C3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		88A100082F50000100AA0001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEEF00052F87000000000101 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		777812682F374DFC0003116E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 777812582F374DFA0003116E /* RemClaw */;
+			targetProxy = 777812672F374DFC0003116E /* PBXContainerItemProxy */;
+		};
+		777812722F374DFC0003116E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 777812582F374DFA0003116E /* RemClaw */;
+			targetProxy = 777812712F374DFC0003116E /* PBXContainerItemProxy */;
+		};
+		BEEF00072F87000000000101 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 77B1AC032F3C5A0100A1B2C3 /* RemClawMac */;
+			targetProxy = BEEF00012F87000000000101 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		777812782F374DFC0003116E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = ZQXV2YB52C;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		777812792F374DFC0003116E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = ZQXV2YB52C;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		7778127B2F374DFC0003116E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 77C1AA022F3D8A0100D1E2F3 /* RemClaw/RemClaw.Debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = RemClaw/RemClaw.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				EXECUTABLE_NAME = "$(TARGET_NAME)";
+				EXCLUDED_SOURCE_FILE_NAMES = README.md;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RemClaw/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Rem;
+				INFOPLIST_KEY_CFBundleName = Rem;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Rem needs calendar access so your AI assistant can view and create events on your behalf.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Rem needs calendar access so your AI assistant can view and create events on your behalf.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Rem uses the camera to scan setup-code QR codes for gateway pairing. No images are saved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Rem needs microphone access for voice conversations with your AI assistant.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Rem needs reminders access so your AI assistant can view and create reminders on your behalf.";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Rem needs reminders access so your AI assistant can view and create reminders on your behalf.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Rem uses speech recognition so you can talk to your assistant and get responses by voice.";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.remapp.rem;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Rem;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				WRAPPER_NAME = "$(TARGET_NAME).app";
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		7778127C2F374DFC0003116E /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 77C1AA032F3D8A0100D1E2F3 /* RemClaw/RemClaw.Release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = RemClaw/RemClaw.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				EXECUTABLE_NAME = "$(TARGET_NAME)";
+				EXCLUDED_SOURCE_FILE_NAMES = README.md;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RemClaw/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Rem;
+				INFOPLIST_KEY_CFBundleName = Rem;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Rem needs calendar access so your AI assistant can view and create events on your behalf.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Rem needs calendar access so your AI assistant can view and create events on your behalf.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Rem uses the camera to scan setup-code QR codes for gateway pairing. No images are saved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Rem needs microphone access for voice conversations with your AI assistant.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Rem needs reminders access so your AI assistant can view and create reminders on your behalf.";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Rem needs reminders access so your AI assistant can view and create reminders on your behalf.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Rem uses speech recognition so you can talk to your assistant and get responses by voice.";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.remapp.rem;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Rem;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				WRAPPER_NAME = "$(TARGET_NAME).app";
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		7778127E2F374DFC0003116E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZQXV2YB52C;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RemClaw.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/RemClaw";
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		7778127F2F374DFC0003116E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZQXV2YB52C;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RemClaw.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/RemClaw";
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		777812812F374DFC0003116E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZQXV2YB52C;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_TARGET_NAME = RemClaw;
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		777812822F374DFC0003116E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZQXV2YB52C;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_TARGET_NAME = RemClaw;
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		77B1AC072F3C5A0100A1B2C3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA3D4E012F6A0B0100C2D3E4 /* RemClawMac/RemClawMac.Debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RemClawMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = README.md;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RemClawMac/Info.plist;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Rem needs calendar access for Agenda context and to create or edit events when you ask.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Rem needs calendar access for Agenda context and to create or edit events when you ask.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Rem needs microphone access for voice conversations with your AI assistant.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Rem needs reminders access for Agenda context and to create or edit reminders when you ask.";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Rem needs reminders access for Agenda context and to create or edit reminders when you ask.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Rem uses speech recognition so you can talk to your assistant and get responses by voice.";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawMac;
+				PRODUCT_MODULE_NAME = RemClawMac;
+				PRODUCT_NAME = Rem;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		77B1AC082F3C5A0100A1B2C3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA3D4E022F6A0B0100C2D3E5 /* RemClawMac/RemClawMac.Release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RemClawMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = README.md;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RemClawMac/Info.plist;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Rem needs calendar access for Agenda context and to create or edit events when you ask.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Rem needs calendar access for Agenda context and to create or edit events when you ask.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Rem needs microphone access for voice conversations with your AI assistant.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Rem needs reminders access for Agenda context and to create or edit reminders when you ask.";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Rem needs reminders access for Agenda context and to create or edit reminders when you ask.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Rem uses speech recognition so you can talk to your assistant and get responses by voice.";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawMac;
+				PRODUCT_MODULE_NAME = RemClawMac;
+				PRODUCT_NAME = Rem;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		88A100092F50000100AA0001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = RemClawWidget/RemClawWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RemClawWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.remapp.rem.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				WIDGETKIT_EXTENSION = YES;
+			};
+			name = Debug;
+		};
+		88A1000A2F50000100AA0001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = RemClawWidget/RemClawWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RemClawWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.remapp.rem.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				WIDGETKIT_EXTENSION = YES;
+			};
+			name = Release;
+		};
+		BEEF00092F87000000000101 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Rem.app/Contents/MacOS/Rem";
+				TEST_TARGET_NAME = RemClawMac;
+			};
+			name = Debug;
+		};
+		BEEF000A2F87000000000101 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R6A892D599;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = samatwork.RemClawMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Rem.app/Contents/MacOS/Rem";
+				TEST_TARGET_NAME = RemClawMac;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		777812542F374DFA0003116E /* Build configuration list for PBXProject "RemClaw" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				777812782F374DFC0003116E /* Debug */,
+				777812792F374DFC0003116E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7778127A2F374DFC0003116E /* Build configuration list for PBXNativeTarget "RemClaw" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7778127B2F374DFC0003116E /* Debug */,
+				7778127C2F374DFC0003116E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7778127D2F374DFC0003116E /* Build configuration list for PBXNativeTarget "RemClawTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7778127E2F374DFC0003116E /* Debug */,
+				7778127F2F374DFC0003116E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		777812802F374DFC0003116E /* Build configuration list for PBXNativeTarget "RemClawUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				777812812F374DFC0003116E /* Debug */,
+				777812822F374DFC0003116E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		77B1AC092F3C5A0100A1B2C3 /* Build configuration list for PBXNativeTarget "RemClawMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				77B1AC072F3C5A0100A1B2C3 /* Debug */,
+				77B1AC082F3C5A0100A1B2C3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		88A1000B2F50000100AA0001 /* Build configuration list for PBXNativeTarget "RemClawWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				88A100092F50000100AA0001 /* Debug */,
+				88A1000A2F50000100AA0001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BEEF000D2F87000000000101 /* Build configuration list for PBXNativeTarget "RemClawMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BEEF00092F87000000000101 /* Debug */,
+				BEEF000A2F87000000000101 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		D58B9FB42F440AA500933EE5 /* XCLocalSwiftPackageReference "openclaw/apps/shared/OpenClawKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = openclaw/apps/shared/OpenClawKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		77C1AA042F3D8A0100D1E2F3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+		AA1B2C3E2F5A0B0100E1F2A3 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.0.0;
+			};
+		};
+		CC1D2E402F6A0C0100B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7784CE1B2F39942D00798D53 /* OpenClawChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawChatUI;
+		};
+		7784CE1D2F39942D00798D53 /* OpenClawKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawKit;
+		};
+		7784CE1F2F39942D00798D53 /* OpenClawProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawProtocol;
+		};
+		77B1AC0D2F3C5A0100A1B2C3 /* OpenClawChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawChatUI;
+		};
+		77B1AC0E2F3C5A0100A1B2C3 /* OpenClawKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawKit;
+		};
+		77B1AC0F2F3C5A0100A1B2C3 /* OpenClawProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawProtocol;
+		};
+		77C1AA002F3D8A0100D1E2F3 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 77C1AA042F3D8A0100D1E2F3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		AA1B2C3C2F5A0B0100E1F2A3 /* PostHog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA1B2C3E2F5A0B0100E1F2A3 /* XCRemoteSwiftPackageReference "posthog-ios" */;
+			productName = PostHog;
+		};
+		CC1D2E3E2F6A0C0100B1C2D3 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CC1D2E402F6A0C0100B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+		D58B9FB52F440AA500933EE5 /* OpenClawChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawChatUI;
+		};
+		D58B9FB72F440AA500933EE5 /* OpenClawKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawKit;
+		};
+		D58B9FB92F440AA500933EE5 /* OpenClawProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenClawProtocol;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 777812512F374DFA0003116E /* Project object */;
+}

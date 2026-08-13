@@ -1,0 +1,19 @@
+# Railway config for the `rem-cron` service (staging).
+# Separate from railway.toml so the cron service overrides the web server's
+# startCommand/healthcheck without touching the backend service's config.
+# Runs the scheduled loop work every 15 min: memory extraction, the
+# orchestrator sweep (autonomous run of ready tasks), daily check-ins, and
+# routines. Each underlying script is idempotent + time-gated.
+[build]
+builder = "nixpacks"
+buildCommand = "npm install && npm run build"
+
+[deploy]
+startCommand = "npm run cron:all"
+cronSchedule = "*/15 * * * *"
+restartPolicyType = "NEVER"
+# Scheduled job: it runs `cron:all`, exits, and never serves HTTP. Explicitly
+# clear the healthcheck so Railway does not inherit the web service's
+# `healthcheckPath = "/health"` (railway.toml) and mark this deploy "failed" for
+# lack of a /health server. An empty path disables the probe.
+healthcheckPath = ""

@@ -1,0 +1,4 @@
+// RemClawMac Release Configuration
+// Note: $() is an xcconfig trick to produce a literal "//"
+
+API_BASE_URL = https:/$()/YOUR_BACKEND_URL

@@ -1,0 +1,9 @@
+// RemClawMac Debug Configuration
+// Note: $() is an xcconfig trick to produce a literal "//"
+
+// Debug → STAGING (current code), matching RemClaw/.env.Debug.xcconfig and the
+// decided operating model (Debug→staging,
+// Release→prod). So Mac dev builds see current features + the STAGING banner,
+// instead of the stale prod backend. Release still ships against production.
+API_BASE_URL = https:/$()/YOUR_BACKEND_URL
+// API_BASE_URL = https:/$()/YOUR_BACKEND_URL

@@ -1,0 +1,29 @@
+-- Task description — the third surface in the founder's model
+-- (docs/product/DECISIONS.md, "Task description vs comments vs chat"):
+--
+--   tasks.description  what I know NOW      current state, updated in place   <- THIS
+--   task_comments      what happened        append-only log ("view history")
+--   chat               the conversation     linked via session_id
+--
+-- Until now an agent run had nowhere to record what it learned or what it still
+-- needs, so every run started from zero. This column is what makes a task
+-- RUNNABLE rather than merely titled.
+--
+-- CO-AUTHORED, and that is the whole design problem. Both the user and the agent
+-- write here, so the column is stored as:
+--
+--     <user's text>
+--
+--     <!-- rem:agent-context -->
+--     <the agent's current-state summary>
+--     <!-- /rem:agent-context -->
+--
+-- The agent may only rewrite the contents of the delimited block; a user PATCH may
+-- only rewrite the text outside it. Neither can clobber the other. The split/merge
+-- is enforced in exactly one place — backend/src/services/task-description.service.ts
+-- — never by an ad-hoc `UPDATE tasks SET description = $1`.
+--
+-- Nullable with no default: an existing task has no description and NULL says so
+-- honestly (an empty string would read as "the user wrote nothing here", which is a
+-- different fact). Writes normalize an all-whitespace result back to NULL.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT;

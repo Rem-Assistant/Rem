@@ -1,0 +1,24 @@
+-- Persist the user's DEVICE timezone on the users row (issue #1097 symptoms 1+2).
+--
+-- Why: the daily brief resolves the user's LOCAL day + time-of-day to pick the greeting
+-- ("Good evening") and the authoring slot (morning/afternoon/evening). Until now the ONLY
+-- place a timezone was stored was `user_checkins.timezone` (migration 027), written lazily
+-- the first time a user ENABLES a check-in slot. A user who never enabled a slot had no
+-- stored tz, so `resolveUserTimezone` fell back to UTC. For a negative-offset user (US
+-- Pacific/Eastern) an early-afternoon instant lands in the UTC *evening* bucket → the brief
+-- greets "Good evening" in the afternoon, and the "evening" slot authors mid-morning local
+-- so later afternoon cron ticks dedupe and never refresh. The brief CRON can't read a live
+-- device, so we need a persisted, always-available user timezone.
+--
+-- This column is the NEW top of the resolution chain in `resolveUserTimezone`:
+--   users.timezone → user_checkins.timezone → UTC
+-- The app writes it best-effort on launch/foreground/login (TimeZone.current.identifier)
+-- via POST /api/v1/users/timezone, independent of whether any check-in slot is enabled.
+--
+-- Nullable so existing rows keep working (chain falls through to user_checkins/UTC until
+-- the app next writes it). IANA id like 'America/Los_Angeles'. A manual account-level
+-- timezone-override SETTING can layer on this same column later (follow-up, not this PR).
+--
+-- Idempotent (IF NOT EXISTS) so it is safe whether or not an env already has the column.
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT;

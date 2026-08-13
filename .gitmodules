@@ -1,0 +1,4 @@
+[submodule "openclaw"]
+	path = openclaw
+	url = https://github.com/Rem-Assistant/openclaw.git
+	branch = main

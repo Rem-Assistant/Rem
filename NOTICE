@@ -1,0 +1,381 @@
+Rem
+Copyright 2026 Rem Labs, Inc.
+
+This product includes software developed at Rem Labs, Inc., licensed under the
+Apache License, Version 2.0 (see LICENSE).
+
+================================================================================
+ABOUT THIS FILE
+================================================================================
+
+This NOTICE file satisfies Apache-2.0 §4(d) and collects the attribution
+obligations Rem carries from third-party software.
+
+Facts here were resolved from the actual license files and lockfiles in this
+repository at the commit that carries this NOTICE. They were not inferred from a
+package's reputation. Where something could not be verified it says so
+explicitly rather than guessing — see "UNRESOLVED" at the end.
+
+Two distinct artifacts have different obligations, and the distinction matters:
+
+  1. The iOS and macOS apps, which we DO distribute (App Store). Their bundled
+     Swift dependencies are conveyed to users, so their notices must ship in the
+     apps' acknowledgements.
+
+  2. The gateway container image, which we DO NOT currently distribute. See
+     "CONVEYANCE" below before changing that.
+
+================================================================================
+1. OPENCLAW (MIT)
+================================================================================
+
+Rem is built on OpenClaw, via our fork at https://github.com/Rem-Assistant/openclaw
+(vendored as the `openclaw/` git submodule).
+
+  Upstream project: https://github.com/openclaw/openclaw
+  License:          MIT
+  Pinned commit:    fb3a259572ff5d29750576d9528e7443df65ad99
+
+The `openclaw/` submodule and our fork remain under MIT, matching upstream. This
+is deliberate: Apache-2.0 is only one-way compatible with MIT, so licensing the
+fork Apache-2.0 would make our patches un-mergeable back into upstream. We
+actively upstream fixes and intend to keep that path open.
+
+At the commit we pin, the copyright line reads:
+
+  MIT License
+  Copyright (c) 2025 Peter Steinberger
+
+Upstream `main` has since reassigned the copyright line to the OpenClaw
+Foundation ("Copyright (c) 2026 OpenClaw Foundation"). The grant is identical
+MIT in both. Both lines are recorded here so this notice stays correct across a
+rebase forward.
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Upstream vendored notices. OpenClaw itself vendors nested license files, all
+permissive, which travel with the submodule: `apps/swabble/LICENSE` (MIT),
+`extensions/open-prose/skills/prose/LICENSE` (MIT), and
+`skills/skill-creator/license.txt` (Apache-2.0).
+
+Portions of OpenClaw were adapted from Pi / pi-mono (MIT), by Mario Zechner
+(https://github.com/badlogic). Upstream records this in a THIRD_PARTY_NOTICES.md
+that does not yet exist at our pinned commit; the attribution is carried here
+because the adapted code is already in what we ship.
+
+================================================================================
+2. SWIFT PACKAGES BUNDLED INTO THE iOS AND macOS APPS
+================================================================================
+
+These are conveyed to users in the shipped apps. Versions and licenses were read
+from `Package.resolved` and from each resolved checkout's own LICENSE file.
+
+--------------------------------------------------------------------------------
+2.1 Apache-2.0
+--------------------------------------------------------------------------------
+
+The following are licensed under the Apache License, Version 2.0. A copy of that
+license is in this repository's LICENSE file.
+
+  google/app-check              11.2.0    https://github.com/google/app-check
+  openid/AppAuth-iOS             1.7.6    https://github.com/openid/AppAuth-iOS
+  google/GoogleSignIn-iOS        8.0.0    https://github.com/google/GoogleSignIn-iOS
+  google/GoogleUtilities         8.1.0    https://github.com/google/GoogleUtilities
+  google/gtm-session-fetcher     3.5.0    https://github.com/google/gtm-session-fetcher
+  google/GTMAppAuth              4.1.1    https://github.com/google/GTMAppAuth
+  google/promises                2.4.0    https://github.com/google/promises
+
+GoogleUtilities additionally vendors `third_party/IsAppEncrypted/` under an
+MIT-style license.
+
+--------------------------------------------------------------------------------
+2.2 MIT
+--------------------------------------------------------------------------------
+
+ElevenLabsKit — https://github.com/Rem-Assistant/ElevenLabsKit
+  (our fork of https://github.com/steipete/ElevenLabsKit, pinned at revision
+  9a908266eb9bdb63c04d6391b19242cab07b1ce0)
+  MIT License. Copyright (c) 2026 Peter Steinberger.
+
+posthog-ios 3.41.2 — https://github.com/PostHog/posthog-ios
+  MIT License. Copyright (c) [2023] [PostHog].
+  (The brackets are literal in the upstream LICENSE file.)
+
+swift-concurrency-extras 1.3.2 — https://github.com/pointfreeco/swift-concurrency-extras
+  MIT License. Copyright (c) 2023 Point-Free.
+
+textual 0.3.1 — https://github.com/gonzalezreal/textual
+  MIT License. Copyright (c) 2024 Guille Gonzalez.
+  Ships an additional third-party manifest at `LICENSE-3rdparty.csv`.
+
+swiftui-math 0.1.0 — https://github.com/gonzalezreal/swiftui-math
+  MIT License, with three copyright holders:
+    Copyright (c) 2026 Guille Gonzalez
+    Copyright (c) 2023 Computer Inspirations (SwiftMath)
+    Copyright (c) 2013 MathChat (iosMath)
+  Embeds a separately-licensed font bundle at
+  `Sources/SwiftUIMath/mathFonts.bundle/LICENSE`:
+    The MIT License (MIT). Copyright (c) 2013 MathChat.
+
+--------------------------------------------------------------------------------
+2.3 Sparkle 2.9.1 — https://github.com/sparkle-project/Sparkle
+--------------------------------------------------------------------------------
+
+Used by the macOS app for updates. Sparkle is often assumed to carry GPL
+components. It does not — its source tree at tag 2.9.1 contains no GPL or LGPL
+notice. It does carry five distinct notices, all of which must appear in the Mac
+app's acknowledgements:
+
+  1. MIT — Sparkle itself.
+     Copyright (c) 2006-2013 Andy Matuschak
+     Copyright (c) 2009-2013 Elgato Systems GmbH
+     Copyright (c) 2011-2014 Kornel Lesinski
+     Copyright (c) 2015-2017 Mayur Pawashe
+     Copyright (c) 2014 C.W. Betts
+     Copyright (c) 2014 Petroules Corporation
+     Copyright (c) 2014 Big Nerd Ranch
+
+  2. BSD-2-Clause — bspatch.c / bsdiff.c, from bsdiff 4.3.
+     Copyright 2003-2005 Colin Percival.
+
+  3. MIT — sais.c / sais.h, from sais-lite (2010/08/07).
+     Copyright (c) 2008-2010 Yuta Mori.
+
+  4. Zlib license — portable C implementation of Ed25519, from
+     https://github.com/orlp/ed25519. Copyright (c) 2015 Orson Peters.
+
+  5. BSD-2-Clause — SUSignatureVerifier.m. Copyright (c) 2011 Mark Hamlin.
+
+Sparkle is consumed as a binary target (a prebuilt `Sparkle.xcframework`
+downloaded at the pinned version and checksum).
+
+================================================================================
+3. GATEWAY IMAGE DEPENDENCIES (Node / npm)
+================================================================================
+
+These arrive through the OpenClaw workspace, not through Rem's own code. They
+are relevant because a workspace-wide install pulls every extension's
+`node_modules` into the gateway image whether or not that extension is enabled.
+The image itself is built and operated separately (private); see "CONVEYANCE".
+
+Across the two lockfiles in this repository — 1,453 packages resolved from the
+OpenClaw workspace and 284 from `backend/` — there is no GPL-only, AGPL, or SSPL
+package. The only GPL-family entries are the
+LGPL items in §3.2 and one dual-licensed package where MIT is electable (§3.4).
+
+--------------------------------------------------------------------------------
+3.1 @anthropic-ai/claude-agent-sdk — NOT AN OSI LICENSE. Read this one.
+--------------------------------------------------------------------------------
+
+  @anthropic-ai/claude-agent-sdk @ 0.2.132   ->  "SEE LICENSE IN README.md"
+
+Its eight platform binary subpackages at the same version (`-darwin-arm64`,
+`-darwin-x64`, `-linux-arm64`, `-linux-arm64-musl`, `-linux-x64`,
+`-linux-x64-musl`, `-win32-arm64`, `-win32-x64`) declare
+"SEE LICENSE IN LICENSE.md".
+
+These are Anthropic's own commercial terms, not an open-source license. It
+reaches us transitively: `extensions/acpx` -> `@agentclientprotocol/claude-agent-acp@0.33.1`
+-> `@anthropic-ai/claude-agent-sdk`.
+
+There is no copyleft here and nothing infects Rem's own code, which remains
+Apache-2.0. But the consequence is worth stating plainly:
+
+  *** THE BUILT GATEWAY IMAGE IS NOT REDISTRIBUTABLE UNDER AN OSI LICENSE. ***
+
+Anyone who forks this repository and builds the gateway image is bound by
+Anthropic's terms for that component, not by ours. This is the single most
+likely thing to surprise a downstream user.
+
+--------------------------------------------------------------------------------
+3.2 LGPL-3.0-or-later — libvips binaries behind `sharp`
+--------------------------------------------------------------------------------
+
+Ten prebuilt native packages, all at version 1.2.4, all LGPL-3.0-or-later:
+
+  @img/sharp-libvips-darwin-arm64      @img/sharp-libvips-linux-s390x
+  @img/sharp-libvips-darwin-x64        @img/sharp-libvips-linux-x64
+  @img/sharp-libvips-linux-arm         @img/sharp-libvips-linuxmusl-arm64
+  @img/sharp-libvips-linux-arm64       @img/sharp-libvips-linuxmusl-x64
+  @img/sharp-libvips-linux-ppc64
+  @img/sharp-libvips-linux-riscv64
+
+Four further `@img/sharp-*` prebuilt binaries at 0.34.5 carry combined strings:
+
+  @img/sharp-win32-arm64    "Apache-2.0 AND LGPL-3.0-or-later"
+  @img/sharp-win32-ia32     "Apache-2.0 AND LGPL-3.0-or-later"
+  @img/sharp-win32-x64      "Apache-2.0 AND LGPL-3.0-or-later"
+  @img/sharp-wasm32         "Apache-2.0 AND LGPL-3.0-or-later AND MIT"
+
+`sharp` @ 0.34.5 itself is Apache-2.0. libvips upstream:
+https://github.com/libvips/libvips (LGPL-2.1-or-later at source; the npm
+prebuilds declare LGPL-3.0-or-later).
+
+Two dependency paths pull `sharp` in — both must be considered:
+  - `extensions/media-understanding-core` -> `sharp`
+  - `extensions/whatsapp` -> `baileys@7.0.0-rc10` -> `sharp`
+
+*** LGPL obligations attach ONLY ON CONVEYANCE — see §4. As long as we publish
+    the Dockerfile and NOT the built image, no LGPL obligation is triggered. ***
+
+LGPL does not reach Rem's own code in any case: libvips is dynamically loaded
+native code sitting behind an Apache-2.0 wrapper.
+
+--------------------------------------------------------------------------------
+3.3 MPL-2.0 — thirteen packages, none modified
+--------------------------------------------------------------------------------
+
+MPL-2.0 is file-level copyleft: the obligation to publish source attaches to
+MPL-licensed files that you modify. **We modify none of them.** No action is
+required beyond this notice. Source for each is available from its npm package
+page and its upstream repository.
+
+  web-push @ 3.6.7 — MPL-2.0. A direct runtime dependency of OpenClaw.
+    https://github.com/web-push-libs/web-push
+
+  lightningcss @ 1.32.0 and its eleven platform binaries — MPL-2.0:
+    lightningcss                        lightningcss-linux-arm64-gnu
+    lightningcss-android-arm64          lightningcss-linux-arm64-musl
+    lightningcss-darwin-arm64           lightningcss-linux-x64-gnu
+    lightningcss-darwin-x64             lightningcss-linux-x64-musl
+    lightningcss-freebsd-x64            lightningcss-win32-arm64-msvc
+    lightningcss-linux-arm-gnueabihf    lightningcss-win32-x64-msvc
+    https://github.com/parcel-bundler/lightningcss
+    These are build-time tooling only: they arrive as an optional dependency of
+    `vite@8.0.11`, itself a devDependency of the `ui` workspace. They are not
+    shipped runtime code.
+
+  dompurify @ 3.4.2 — "(MPL-2.0 OR Apache-2.0)". A runtime dependency of the
+    `ui` workspace. **Rem elects Apache-2.0** for this package.
+    https://github.com/cure53/DOMPurify
+
+--------------------------------------------------------------------------------
+3.4 Packages with absent, non-standard, or dual license metadata
+--------------------------------------------------------------------------------
+
+  jszip @ 3.10.1 — "(MIT OR GPL-3.0-or-later)"
+    A direct runtime dependency of OpenClaw.
+    *** Rem elects MIT. *** This election is recorded here so downstream users
+    are not left to assume the GPL branch applies.
+    https://github.com/Stuk/jszip
+
+  @tencent-connect/qqbot-connector @ 1.1.0 — declares "UNLICENSED"
+    Reaches the image via `extensions/qqbot`. "UNLICENSED" in npm metadata means
+    the publisher grants no license. We do not use this extension, but the
+    workspace install places it in the image. UNRESOLVED — see below.
+
+  exif-parser @ 0.1.12 — declares NO license field at all
+    Path: `extensions/whatsapp` -> `jimp@1.6.1` -> `@jimp/core@1.6.1` ->
+    `exif-parser`. The package publishes neither a `license` string nor a legacy
+    `licenses` array. Absence of metadata is not a grant of rights.
+    UNRESOLVED — see below.
+
+--------------------------------------------------------------------------------
+3.5 Debian packages in the gateway image
+--------------------------------------------------------------------------------
+
+The gateway image installs Debian `chromium` and `fonts-liberation`, which pull
+GPL and LGPL shared libraries as apt dependencies. The Dockerfile removes
+`/var/lib/apt/lists/` but deliberately does not remove `/usr/share/doc/`, so
+each Debian package's own `copyright` file remains present in the image — which
+is what compliance requires if the image is ever conveyed. See §4.
+
+================================================================================
+4. CONVEYANCE — WHY THE IMAGE STAYS PRIVATE
+================================================================================
+
+*** READ THIS BEFORE PUBLISHING ANY CONTAINER IMAGE. ***
+
+Nearly every obligation in §3 — LGPL relinking rights for libvips, Debian's
+GPL/LGPL package copyrights, and redistribution of the non-OSI Anthropic SDK —
+triggers on CONVEYING A COPY of the built artifact. None of them trigger on
+merely running a hosted service, and none trigger on publishing source.
+
+As of this commit, Rem does not convey the gateway image:
+
+  - The Fly build target is a private, per-organisation registry.
+  - `ghcr.io/rem-assistant/openclaw-gateway` is private; an anonymous pull is
+    refused.
+  - No GitHub Actions workflow performs a `docker push`, a registry login, a
+    `buildx` publish, or an `npm publish`. This was verified across every
+    workflow file in `.github/workflows/`.
+
+**The intended posture is: publish the Dockerfile, keep the built image
+private.** Anyone building it pulls those packages themselves, directly from
+their origins, under their own licenses. That costs us nothing and removes an
+entire compliance surface.
+
+If that ever changes — if a pullable image is published anywhere public — the
+following become live obligations and must be satisfied BEFORE the push:
+
+  1. LGPL-3.0-or-later (§3.2): recipients are owed the libvips source
+     corresponding to the shipped binaries, plus the ability to relink. In
+     practice this is satisfied by a written offer plus the upstream source URL.
+     It does NOT require relicensing any Rem code.
+  2. Debian GPL/LGPL runtime libraries (§3.5): ship the per-package copyright
+     files (already retained in the image) and a corresponding source offer.
+  3. Anthropic SDK (§3.1): confirm Anthropic's terms permit the redistribution,
+     since they are not an OSI license and grant no automatic right to convey.
+  4. The unresolved packages in §3.4 must be resolved first, not after.
+
+================================================================================
+5. OTHER COMPONENTS
+================================================================================
+
+voice-worker/ — an archived experiment, not part of the supported Rem runtime.
+It depends on the LiveKit Agents Python stack (`livekit-agents`,
+`livekit-plugins-noise-cancellation`, `livekit-plugins-openai`) and
+`python-dotenv`. These are declared dependencies, not vendored source; nothing
+from them is redistributed by this repository. Their licenses are UNRESOLVED —
+see below.
+
+LiveKit and the Swift app — for the avoidance of doubt, no LiveKit code is
+vendored into or linked by the iOS or macOS apps. LiveKit appears in no Swift
+package pin and in no app target. The only reference in Swift source is a
+descriptive doc comment. No LiveKit attribution is owed by the shipped apps.
+
+================================================================================
+UNRESOLVED — DO NOT TREAT THESE AS CLEARED
+================================================================================
+
+The following could not be verified from the artifacts in this repository. They
+are recorded here rather than guessed at, and each needs a human decision before
+this notice can be called complete:
+
+  1. @tencent-connect/qqbot-connector @ 1.1.0 declares "UNLICENSED". No grant of
+     rights has been located. It reaches the image only through an extension we
+     do not enable.
+
+  2. exif-parser @ 0.1.12 declares no license at all. Any license we might state
+     for it would be our characterisation, not the publisher's grant.
+
+  3. The LiveKit Python packages used by the archived `voice-worker/` were not
+     resolved — there is no lock file, virtualenv, or vendored license in the
+     tree to read. In particular, `livekit-plugins-noise-cancellation` wraps a
+     proprietary noise-cancellation model and should not be assumed to be
+     Apache-2.0 by extension from the LiveKit SDK.
+
+  4. The Sparkle review covered its source tree at tag 2.9.1. The artifact
+     actually linked is a prebuilt binary xcframework, which was not inspected.
+
+================================================================================
+
+Third-party licenses are the property of their respective owners. Where any
+statement in this file conflicts with a dependency's own license text, that
+license text governs.

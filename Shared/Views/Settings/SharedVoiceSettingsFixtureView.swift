@@ -1,0 +1,77 @@
+import SwiftUI
+
+#if DEBUG
+/// Deterministic visual-QA surface for `SharedVoiceSettingsView`.
+///
+/// Launch iOS with `--rem-voice-settings-fixture` to render the exact shared
+/// Voice settings overview — including the top-of-screen "Hear this voice"
+/// preview control (#1373 / #1372) — without auth, a paired gateway, or a live
+/// speech provider. A `PreviewGatewaySession` answers the `talk.*` RPCs from
+/// canned, non-secret payloads, so the screen loads voices, resolves the
+/// selected voice, and can play a short (silent) canned sample end-to-end.
+struct SharedVoiceSettingsFixtureView: View {
+    @State private var gateway: PreviewGatewaySession
+
+    init() {
+        let gateway = PreviewGatewaySession(scenario: .cloudConnected)
+        gateway.skillsRequestHandler = { method, _ in
+            try SharedVoiceSettingsFixtureView.cannedResponse(for: method)
+        }
+        _gateway = State(initialValue: gateway)
+    }
+
+    var body: some View {
+        NavigationStack {
+            SharedVoiceSettingsView(gateway: gateway)
+        }
+    }
+
+    private static func cannedResponse(for method: String) throws -> Data {
+        let json: String
+        switch method {
+        case "talk.catalog":
+            json = """
+            {"speech":{"activeProvider":"elevenlabs","providers":[{"id":"elevenlabs","configured":true}]}}
+            """
+        case "talk.config":
+            json = """
+            {"config":{"talk":{"provider":"elevenlabs","providers":{"elevenlabs":{"voiceId":"rachel"}}}}}
+            """
+        case "talk.voices":
+            json = """
+            {"provider":"elevenlabs","voices":[
+              {"id":"rachel","name":"Rachel","description":"Warm, calm narration","personalities":["Warm","Calm"]},
+              {"id":"drew","name":"Drew","description":"Confident and clear"},
+              {"id":"bella","name":"Bella","description":"Bright and friendly"}
+            ]}
+            """
+        case "talk.speak":
+            json = """
+            {"audioBase64":"\(previewSampleBase64())","provider":"elevenlabs","outputFormat":"mp3","mimeType":"audio/mpeg","fileExtension":".mp3"}
+            """
+        case "talk.speak.cancel":
+            json = "{}"
+        default:
+            json = "{}"
+        }
+        return Data(json.utf8)
+    }
+
+    /// The canned sample: the compact CBR frame stream repeated so the preview
+    /// stays in its playing state long enough to observe. CBR MPEG-1 Layer III
+    /// frames concatenate into a valid longer stream, so this needs no larger
+    /// literal and still satisfies `MP3FrameValidator` (it inspects the first
+    /// two frames).
+    private static func previewSampleBase64() -> String {
+        guard let frame = Data(base64Encoded: previewAudioBase64) else { return previewAudioBase64 }
+        var looped = Data()
+        for _ in 0..<60 { looped.append(frame) }
+        return looped.base64EncodedString()
+    }
+
+    /// ~0.35s of CBR MPEG-1 Layer III silence (48 kbps, no Xing/ID3), base64.
+    /// Satisfies `MP3FrameValidator` so `AVAudioPlayer` accepts it and the
+    /// preview reaches its playing state; audible content is irrelevant to QA.
+    private static let previewAudioBase64 = "//swxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//syxEODwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/7MsSHg8AAAaQAAAAgAAA0gAAABFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+zLEu4PAAAGkAAAAIAAANIAAAARVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//swxLwDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//syxLuDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/7MsS7g8AAAaQAAAAgAAA0gAAABFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVTEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+zLEu4PAAAGkAAAAIAAANIAAAARVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//swxLwDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//syxLuDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/7MsS7g8AAAaQAAAAgAAA0gAAABFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVTEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+zLEu4PAAAGkAAAAIAAANIAAAARVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//swxLwDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//syxLuDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/7MsS7g8AAAaQAAAAgAAA0gAAABFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU="
+}
+#endif

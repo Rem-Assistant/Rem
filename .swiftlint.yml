@@ -1,0 +1,181 @@
+# RemClaw SwiftLint Configuration
+# Architecture enforcement rules for harness engineering
+
+included:
+  - RemClaw/Sources
+  - RemClawMac/Sources
+  - Shared
+
+excluded:
+  - .build
+  - DerivedData
+  - "**/.build"
+  - "**/.swiftpm"
+  - "**/DerivedData"
+  - "**/Generated"
+  - "**/Resources"
+  - "**/Tests/Resources"
+  - "**/.claude"
+  - "**/build"
+  - openclaw
+
+analyzer_rules:
+  - unused_declaration
+  - unused_import
+
+opt_in_rules:
+  - array_init
+  - closure_spacing
+  - contains_over_first_not_nil
+  - empty_count
+  - empty_string
+  - explicit_init
+  - fallthrough
+  - fatal_error_message
+  - first_where
+  - joined_default_parameter
+  - last_where
+  - literal_expression_end_indentation
+  - multiline_arguments
+  - multiline_parameters
+  - operator_usage_whitespace
+  - overridden_super_call
+  - pattern_matching_keywords
+  - private_outlet
+  - prohibited_super_call
+  - redundant_nil_coalescing
+  - sorted_first_last
+
+# Architecture rules (custom)
+# These enforce the protocol-based patterns from CLAUDE.md
+
+# RemClaw architecture rules:
+# 1. Shared views must be generic over GatewaySessionProviding
+# 2. Platform-specific code must use #if os(iOS) / #if os(macOS) guards
+# 3. No @Observable classes in Shared/ that depend on UIKit/AppKit
+# 4. All new views go in Shared/Views/ unless platform-specific
+
+# Disabled rules for specific files
+disabled_rules:
+  - identifier_name
+
+# Line length (Swift style guide)
+# Error tier intentionally generous so existing legal-content strings
+# don't break lint; new code should still aim under the warning tier.
+line_length:
+  warning: 120
+  error: 1500
+  ignores_urls: true
+  ignores_function_declarations: true
+  ignores_comments: true
+  ignores_interpolated_strings: true
+
+# File length
+file_length:
+  warning: 500
+  error: 2000
+
+# Type length
+type_body_length:
+  warning: 400
+  error: 1500
+
+# Function length
+function_body_length:
+  warning: 50
+  error: 200
+
+# Cyclomatic complexity
+cyclomatic_complexity:
+  warning: 10
+  error: 30
+
+# Function parameter count — many existing task APIs take 9 params
+function_parameter_count:
+  warning: 5
+  error: 15
+
+large_tuple:
+  warning: 2
+  error: 15
+
+# Cognitive complexity
+cognitive_complexity:
+  warning: 15
+  error: 30
+
+# Type name
+type_name:
+  min_length: 3
+  max_length: 50
+  excluded:
+    - ID
+    - VM
+    - UI
+    - HTTP
+    - SSH
+    - API
+    - JWT
+    - URL
+    - UUID
+    - JSON
+
+# Identifier length
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 50
+    error: 60
+  excluded:
+    - id
+    - to
+    - on
+    - by
+    - of
+    - in
+    - ip
+    - ok
+    - db
+    - ui
+
+# Force unwrap (warning only, not error for async/actor patterns)
+force_cast: error
+force_try: warning
+force_unwrapping:
+  severity: warning
+  exceptions:
+    - id
+    - identifier
+    - uuid
+
+# Closure / formatting tweaks
+closure_body_length:
+  warning: 20
+  error: 50
+
+trailing_comma:
+  mandatory_comma: false
+
+# Custom rules for RemClaw architecture
+custom_rules:
+  no_ui_imports_in_shared:
+    name: "No UIKit/AppKit imports in Shared"
+    regex: '(import\s+(UIKit|AppKit))\s*\n(?!.*#if\s+(os\(iOS\)|os\(macOS\)))'
+    message: "UIKit/AppKit imports in Shared/ must be guarded with #if os(iOS)/#if os(macOS)"
+    severity: warning
+    included: "Shared/"
+
+  shared_views_must_be_generic:
+    name: "Shared views should be generic"
+    regex: 'struct\s+\w+View:\s*View\s*\{[^}]*@ViewBuilder\s+var\s+body:\s*some\s*View'
+    message: "New views in Shared/Views/ should be generic over GatewaySessionProviding protocol"
+    severity: warning
+    included: "Shared/Views/"
+
+  protocol_methods_must_have_docs:
+    name: "Protocol methods need documentation"
+    regex: '@\s*(mutating)?\s*func\s+\w+\([^)]*\)'
+    message: "Public protocol methods should have documentation comments"
+    severity: warning

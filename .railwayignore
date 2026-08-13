@@ -1,0 +1,50 @@
+# Railway uploads from the git root, not from backend/, so junk at the repo root ends up in the
+# build context. On 2026-08-11 `railway up` from backend/ failed outright with:
+#
+#   IO error for operation on .pnpm-store/v11/projects/6a78402addc4bb072dcbf3ed6ae4676d:
+#   No such file or directory (os error 2)
+#
+# .pnpm-store is pnpm's content-addressable store; it carries dangling entries that the uploader
+# indexes and then cannot read. It is never part of a deploy.
+.pnpm-store/
+
+# Local build output and caches — large, machine-specific, never needed to build the backend.
+node_modules/
+backend/dist/
+.build/
+build/
+BuildResults/
+DerivedData/
+.xcodebuildmcp/
+
+# Worktrees and session scratch. `.claude/worktrees/` holds full checkouts of every parallel
+# branch — uploading those makes the context enormous and is never correct.
+.worktrees/
+.claude/worktrees/
+.codex-session-backups-*/
+.symphony-workspaces/
+
+# Xcode / macOS noise
+*.xcuserdatad/
+*.xcuserstate
+.DS_Store
+
+# The iOS/macOS apps and the vendored gateway source are not part of the backend image.
+RemClaw/
+RemClawMac/
+openclaw/
+_reference/
+graphify-out/
+
+# Local secrets. .railwayignore does NOT inherit .gitignore, so these would otherwise be
+# uploaded into the build context by `railway up`. `npm run dev:local` generates real values
+# into backend/.env.local. Railway supplies the deployed environment's variables itself; no
+# .env file should ever ride along with the source.
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+*.pem
+*.key

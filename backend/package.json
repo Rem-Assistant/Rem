@@ -1,0 +1,50 @@
+{
+  "name": "remclaw-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && cp -r src/db/migrations dist/db/",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "dev:local": "bash ./scripts/dev-local.sh",
+    "migrate": "tsx src/db/run-migrations.ts",
+    "test:integration": "vitest run src/routes/brief-atomic.integration.test.ts src/services/orchestrator-sweep.integration.test.ts src/db/migrations/push-installation-rollout.integration.test.ts",
+    "test:integration:watch": "vitest src/routes/brief-atomic.integration.test.ts src/services/orchestrator-sweep.integration.test.ts src/db/migrations/push-installation-rollout.integration.test.ts",
+    "patch:model:all": "tsx src/scripts/patch-default-model-all-gateways.ts",
+    "sync:composio:all": "tsx src/scripts/sync-composio-mcp-all-gateways.ts",
+    "revoke:channels": "tsx src/scripts/revoke-native-channels.ts",
+    "repair:pairings": "tsx src/scripts/repair-broken-pairings.ts",
+    "digests:run": "tsx src/scripts/run-digests.ts",
+    "routines:run": "tsx src/scripts/run-routines.ts",
+    "checkins:run": "tsx src/scripts/daily-checkins.ts",
+    "signals:ingest": "tsx src/scripts/ingest-signals.ts",
+    "orchestrator:sweep": "tsx src/scripts/run-orchestrator-sweep.ts",
+    "brief:author": "tsx src/scripts/run-brief-authoring.ts",
+    "brief:repair": "tsx src/scripts/repair-canonical-brief.ts",
+    "memories:extract": "tsx src/scripts/extract-memories.ts",
+    "cron:all": "tsx src/scripts/cron-all.ts"
+  },
+  "dependencies": {
+    "@composio/core": "^0.14.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.0",
+    "google-auth-library": "^9.14.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "@types/dotenv": "^6.1.1",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.6",
+    "@types/supertest": "^6.0.3",
+    "@types/ws": "^8.18.1",
+    "supertest": "^7.1.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

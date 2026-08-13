@@ -1,0 +1,237 @@
+# gitleaks config — Rem
+#
+# Re-run:  gitleaks dir . --no-banner --redact=100
+#          gitleaks git . --log-opts="--all" --no-banner --redact=100
+#
+# Full inventory, fingerprints and reasoning: docs/open-source/SECRET-AUDIT.md
+#
+# ==============================================================================
+# READ THIS BEFORE YOU "SIMPLIFY" THE ALLOWLIST
+# ==============================================================================
+#
+# The allowlist below scopes by VALUE (`regexes`), not by PATH (`paths`).
+# That is deliberate, it is the entire point of this file, and it must not be
+# converted back into a list of paths.
+#
+# A path allowlist silences a file FOREVER — including secrets added to that file
+# later. An earlier revision of this config allowlisted paths such as
+# `^LOCAL_SETUP_COMPLETE\.md$`, `^_reference/OpenClawTestBed/.*`,
+# `^RemClaw/Hackathon/.*` and `.*local-setup\.md$`. The triage behind them was
+# careful: someone opened the findings gitleaks reported in those files and
+# confirmed they were placeholders. The conclusion was still wrong, because it
+# generalised from "these findings are benign" to "this file is benign".
+#
+# Measured outcome of that config: a working-tree scan reported ZERO findings
+# while three real, unrotated credentials sat in the tree — silenced by path, not
+# absent. Five of the repo's seven genuine secrets were suppressed that way.
+# A scanner that reports nothing is indistinguishable from a scanner that is
+# broken, and it is worse than no scanner at all, because it is believed.
+#
+# A value allowlist cannot fail that way. It silences one known-benign STRING, so
+# a real credential added to an already-triaged file still trips the scan.
+#
+# The only `paths` entries permitted here are content-addressed lockfiles in which
+# every hex string is a SHA-256 revision by construction — those cannot become
+# secrets in a later revision, so path-scoping them is safe. Everything else that
+# needs suppressing goes in `regexes`, quoted as the literal benign value.
+#
+# If a scan is noisy, add the specific benign VALUE. Never the file.
+#
+# ==============================================================================
+
+[extend]
+useDefault = true
+
+# ------------------------------------------------------------------------------
+# Supplementary rules
+#
+# Why these exist: gitleaks' default `generic-api-key` rule requires an assignment
+# (`token = "..."`) or a nearby keyword. It therefore walks straight past a secret
+# sitting alone on its own line — which is precisely the shape this repo leaks.
+#
+# Demonstrated, not assumed: the default ruleset flagged a 64-hex token on the
+# `Authorization: Bearer ...` line of LOCAL_SETUP_COMPLETE.md and missed the SAME
+# token 75 lines later, alone inside a fenced code block under a heading reading
+# "### Backend Service Token". It also missed the 32-hex Apple shared secret six
+# lines below that. Both are live in the tree.
+#
+# The hex rules match hex that is PRESENTED AS A VALUE — either alone on its own
+# line, or as the entire contents of a backtick span. Both mean "someone pasted a
+# token here". Backticks are not decoration: the repo's highest-severity secret,
+# the backend JWT_SECRET, hid for months inside a markdown bullet reading
+# **JWT_SECRET**: `<64 hex>`, which is neither an assignment (so `generic-api-key`
+# skipped it) nor alone on a line (so line anchoring alone skipped it too).
+#
+# What is deliberately NOT matched: hex appearing anywhere at all. Unanchored,
+# hex-64 alone produced ~10,000 hits — lockfile revisions and fixture node ids —
+# which buries a real finding just as effectively as suppressing it. Detection you
+# cannot read is not detection.
+#
+# Precisely: hex mid-line is matched only inside a backtick span. Hex in double or
+# single quotes is matched only when the quoted value is the whole line (the JSON
+# array-element shape). An inline assignment like `let t = "<hex>"` is left to the
+# default `generic-api-key` rule, which does catch it — verified against the
+# hackathon token in RemClaw/Hackathon/Gateway/GatewaySessionManager.swift.
+# ------------------------------------------------------------------------------
+
+[[rules]]
+id = "remclaw-hex64-presented-as-value"
+description = "64-char hex presented as a value — `openssl rand -hex 32` service/gateway token shape"
+regex = '''(?m)(?:^[ \t>*+\-]*(?://+|#+)?[ \t]*[`"']?[0-9a-f]{64}[`"',;]?[ \t]*$|`[0-9a-f]{64}`)'''
+keywords = []
+
+[[rules]]
+id = "remclaw-hex32-presented-as-value"
+description = "32-char hex presented as a value — Apple app-specific shared secret shape"
+regex = '''(?m)(?:^[ \t>*+\-]*(?://+|#+)?[ \t]*[`"']?[0-9a-f]{32}[`"',;]?[ \t]*$|`[0-9a-f]{32}`)'''
+keywords = []
+
+[[rules]]
+id = "remclaw-provider-key-prefix"
+description = "Well-known provider key prefixes, keyword-independent"
+regex = '''\b(sk-ant-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{20,}|sk_[a-f0-9]{40,}|xox[baprs]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{35}|SG\.[A-Za-z0-9_\-]{20,}|rk_live_[A-Za-z0-9]{20,}|pk_live_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_\-]{20}|dop_v1_[a-f0-9]{64}|fo1_[A-Za-z0-9_\-]{20,})'''
+keywords = []
+
+[[rules]]
+id = "remclaw-private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN[ A-Z]*PRIVATE KEY-----'''
+keywords = ["PRIVATE KEY"]
+
+[[rules]]
+id = "remclaw-database-url-password"
+description = "Postgres/Redis/Mongo URL carrying a non-placeholder password"
+regex = '''(postgres(ql)?|redis|mongodb(\+srv)?)://[A-Za-z0-9_\-]+:[A-Za-z0-9_\-%!@#$^&*]{12,}@'''
+keywords = ["://"]
+
+# ------------------------------------------------------------------------------
+# Allowlist — by VALUE. See the header before adding to this.
+#
+# Every entry below is a literal placeholder or fixture string that was opened and
+# confirmed benign. Each is listed with what it is and where it came from, so the
+# next person can re-verify one entry without re-triaging the whole scan.
+# ------------------------------------------------------------------------------
+
+#
+# Two blocks, differing only in `regexTarget`:
+#   - the first matches against the detected SECRET, which is the strongest form:
+#     the benign string itself is what gets excused, wherever it appears;
+#   - the second matches against the whole LINE, and is used only where a value is
+#     benign because of its immediate context rather than its own text (a CI
+#     service-container URL; a PEM header whose body is the word "fake"). Line
+#     scoping is weaker than secret scoping — it would excuse a real secret that
+#     happened to share a line with the benign marker — so keep it to the two
+#     entries that genuinely need it and prefer the first block otherwise.
+#
+
+[[allowlists]]
+description = """
+Documented placeholders, test fixtures, and one public-by-design client key.
+Matched against the detected secret. Scoped to the VALUE, never the file — a real
+secret added to any of these files must still be reported. Do not replace these
+with path entries.
+"""
+
+regexes = [
+  # --- Documentation placeholders -------------------------------------------
+  # `curl -H "Authorization: Bearer <token>"` request shapes in PROTOCOL.md,
+  # team-setup.md, voice-integration.md, local-setup.md and the
+  # _reference/OpenClawTestBed mirrors of those same files. These resolve to
+  # literal placeholder words, not tokens.
+  '''YOUR_TOKEN''',
+  '''YOUR_GATEWAY_TOKEN''',
+  '''your-token''',
+  '''your-gateway-token''',
+  '''your-service-token-here''',
+  '''<your-jwt-token>''',
+  '''<gateway>''',
+  '''<token>''',
+  '''\$\{?(GATEWAY_TOKEN|OPENCLAW_TOKEN|TOKEN)\}?''',
+
+  # --- Test fixtures ---------------------------------------------------------
+  # Hand-built fake JWTs in RemClawTests/VoiceSettingsModelsTests.swift.
+  # `e30` is base64 for `{}` — an empty claims set, i.e. structurally a fixture.
+  '''e30\.[A-Za-z0-9_\-]+\.signature''',
+  # RemClawTests/SessionPreviewEntryTests.swift — example.com URL fixture.
+  '''abcdef123456''',
+  # Backend integration tests.
+  '''0123456789abcdef0123456789abcdef''',
+  '''test-service-token''',
+  '''test-jwt-secret''',
+  '''test-secret''',
+  # BYOK / auth-profile tests, plus the `"provider": "anthropic"` config example in
+  # the OpenClawTestBed team-setup doc: sk-ant-… strings that spell out that they
+  # are not keys. The doc one (sha256[:12] = 39b3ffcd87de) is 36 chars and contains
+  # "your"; a real Anthropic key is ~108 chars, so it cannot be one.
+  '''(?i)sk-ant-[A-Za-z0-9_\-]*(NOTAREALKEY|THIS-IS-THE-USER-SECRET|CANDIDATE|FAKE|TEST|DUMMY|EXAMPLE|YOUR)''',
+
+  # --- Public by design ------------------------------------------------------
+  # POSTHOG_API_KEY in the tracked xcconfigs carries the `phc_` prefix: a PostHog
+  # PROJECT key. Write-only ingestion, designed to be embedded in a client app,
+  # trivially extractable from any distributed build. Not a credential leak and
+  # must not be rotated on that basis. Contributors wanting their own PostHog
+  # project use the untracked *.local.xcconfig override.
+  '''phc_''',
+]
+
+# The ONLY permitted path entries. Both are content-addressed lockfiles in which
+# every 64-hex string is a SHA-256 revision by construction — ~9,965 of them.
+# They cannot become secrets in a later revision, which is what makes path-scoping
+# safe here and unsafe everywhere else. Do not add to this list.
+paths = [
+  '''.*/Package\.resolved$''',
+  '''.*/uv\.lock$''',
+]
+
+[[allowlists]]
+description = """
+Benign by immediate context rather than by the value's own text, so matched
+against the whole line. Deliberately only two entries — see the note above on why
+line scoping is the weaker tool.
+"""
+regexTarget = "line"
+
+regexes = [
+  # .github/workflows/build.yml — CI service container. The password is the
+  # database name repeated and the host is 127.0.0.1; reachable only from inside
+  # the job that starts the container.
+  '''postgres://remclaw_test:remclaw_test@127\.0\.0\.1''',
+  # backend/src/services/push.service.test.ts — APNs auth key fixture whose PEM
+  # body is the literal string "fake" (escaped \n in the TS source, not newlines).
+  '''BEGIN PRIVATE KEY-----\\+n?fake''',
+]
+
+# ==============================================================================
+# EXPECTED FINDINGS — this config is meant to report, not to reach zero
+# ==============================================================================
+#
+# As of 2026-08-11 this config reports 26 findings across all refs and 6 against
+# the working tree. That is the correct outcome, not a failure. Every one of them
+# is accounted for — there are no false positives:
+#
+#   all refs      21 of 26  the 7 genuine secrets catalogued in the audit
+#                  4 of 26  the other known value listed below
+#                  1 of 26  a history-only fixture no longer catalogued here
+#                           (clears with the coming history squash)
+#   working tree   5 of 6   the 3 secrets live in the tree (S4, S5, S7)
+#                  1 of 6   the vendored sample password below
+#
+# The 21 are awaiting ROTATION by the founder. Suppressing them is what the
+# previous config did. Do not "fix" the scan by silencing them — they go quiet
+# when they are rotated and scrubbed, in that order.
+#
+# The other 4 are one known, non-urgent value, deliberately left visible so it
+# gets dealt with rather than forgotten:
+#
+#   sha256[:12] = 82ea11b98a8e   _reference/OpenClawTestBed/backend/README.md:62
+#       (4 hits across history via the OpenclawTestBed/ and _reference/ mirrors)
+#       17-char local Postgres password for a VENDORED third-party sample
+#       (tija/tijaDB). Not ours, not reachable. Scrub for tidiness; do not rotate.
+#
+# (A second history-only fixture previously catalogued here lived in the
+# now-removed private gateway tree; it is gone from this repo and clears from
+# history with the coming squash.)
+#
+# A scan that reports zero has not proved the repo is clean. It has only proved
+# that the scan reports zero. Check what it CAN see before you trust what it says.
+# ==============================================================================
