@@ -40,27 +40,15 @@ Both apps follow a **protocol-oriented service coordinator** pattern with SwiftU
 - **Services** (`RemAuthService`, `FocusSessionManager`, etc.) use `@MainActor` isolation and are injected via SwiftUI `@Environment`.
 - **Backend** uses classic service-layer: routes → services → database. No ORM — raw parameterized SQL queries.
 
-## Product decisions (read before proposing product changes)
-
-[`docs/product/DECISIONS.md`](docs/product/DECISIONS.md) records the founder's standing decisions
-**with the reasoning that produced them** — memory stays thin and why three attempts at it failed;
-the task / note / folder / list model; description vs comments vs chat and why no fourth surface;
-stale means stop-nagging not delete; an empty brief is fine; every connector should ingest without
-per-connector descriptors; and which GMI is kept versus retired.
-
-Most entries were written after an attempt in the opposite direction failed, so the failure is the
-useful part. Read it before proposing a change in those areas, and if you reverse a decision, say
-you are reversing it and why rather than quietly doing something else.
-
 ## Decision Principles
 
 These four principles take priority over speed. Apply them before writing code, opening a PR, or filing an issue.
 
-### 1. Mirror upstream before inventing
+### 1. Mirror the current agent runtime before inventing
 
-Before introducing a new abstraction, file, protocol shape, state model, or recovery flow, check whether **OpenClaw upstream** (under `openclaw/`) or the **reference iOS app** (`openclaw/apps/ios/`) already has a pattern we should mirror. If an upstream pattern exists, use it unless there is a documented Rem-specific reason not to.
+Before introducing a new abstraction, file, protocol shape, state model, or recovery flow, check whether the **current agent runtime** already has a pattern we should mirror. Today that runtime is **OpenClaw** — check upstream (under `openclaw/`) or the **reference iOS app** (`openclaw/apps/ios/`) first. If a runtime pattern exists, use it unless there is a documented Rem-specific reason not to. If Rem later supports another agent runtime, the same rule applies to whichever runtime the code in question targets: mirror it before inventing.
 
-This is how we avoid re-litigating problems upstream has already solved (setup-code format, scope handshakes, paired-device storage, gateway lifecycle, control-ui flow, etc). Citations to upstream files belong in code comments and PR bodies.
+This is how we avoid re-litigating problems the runtime has already solved (setup-code format, scope handshakes, paired-device storage, gateway lifecycle, control-ui flow, etc). Citations to the runtime's source files belong in code comments and PR bodies.
 
 ### 2. Think in full lifecycles, not just happy paths
 

@@ -27,5 +27,3 @@ architecture overview.
 |-----|---------|
 | [IOS_MAC_PARITY.md](IOS_MAC_PARITY.md) | iOS/Mac feature parity audit. Product priorities here are secondary to `product/VISION.md` when they conflict. |
 | [MAC_GATEWAY_TROUBLESHOOTING.md](MAC_GATEWAY_TROUBLESHOOTING.md) | Mac local gateway recovery notes. |
-| [UX-NATIVE-ALIGNMENT.md](UX-NATIVE-ALIGNMENT.md) | Settings and native macOS UI alignment notes. |
-| [POSTHOG_TELEMETRY.md](POSTHOG_TELEMETRY.md) | Telemetry configuration overview. |

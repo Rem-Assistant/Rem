@@ -32,7 +32,7 @@ before starting Xcode work.
    Add or update unit tests wherever the logic is pure (classifiers, predicates, parsers).
 3. **Read inline PR review comments (Codex/CI) before merging.** Note which are stale — pinned to
    an old commit and already resolved by a later rewrite — vs. live and still applicable.
-4. **One focused PR per change**, targeting `staging`. Put a 4-line pre-coding summary in the PR
+4. **One focused PR per change**, targeting `main`. Put a 4-line pre-coding summary in the PR
    body: pattern mirrored · user outcome (in user words) · in-scope · out-of-scope.
 5. **Mirror an existing in-repo/upstream pattern** before inventing a new abstraction (Decision
    Principle 1 in `CLAUDE.md`). Cite the file you mirrored.
@@ -43,12 +43,12 @@ before starting Xcode work.
 
 ## 2. Deploy safety (destructive if ignored)
 
-- **PR → `staging` only. Never push directly to `main` or `staging`. Never deploy without the
-  founder's explicit say** — merges land on `staging` and stop there.
+- **PR → `main` only. Never push directly to `main`. Never deploy without the
+  founder's explicit say** — merges land on `main` and stop there.
 - **`backend/` is linked to PRODUCTION on Railway.** A bare `railway up` ships to prod. Always run
   `railway status` first and target the staging service. `railway logs --build` shows *a* build,
   not necessarily yours — verify by image timestamp.
-- Prod runs a stale `main`; staging is where active work integrates. Expect plumbing drift between
+- Active work integrates on `main` via PRs. Expect plumbing drift between
   client cache, gateway config, and backend — name the source of truth before changing a stateful flow.
 - The `rem-cron` "fail" health signal is a known chronic FALSE POSITIVE — verify against the actual
   logs/email before treating a cron-failure alert as real.
@@ -83,15 +83,15 @@ session manager. Reconcile `Shared/Views/DesignTokens.swift` with the local Nati
 for any change claiming macOS/Native parity (Decision Principle 6 in `CLAUDE.md`). Loading states use
 a **shimmer skeleton of the real layout**, not a spinner.
 
-## 5. How not to fool yourself (added 2026-08-12, from one night that produced five instances)
+## 5. How not to fool yourself
 
-Every wrong answer in that session was wrong the *same way*: **a check returned a confident result while measuring something adjacent to the question.** Not carelessness — each agent was careful. What caught them was always something structurally different looking at the same claim.
+These wrong answers are all wrong the *same way*: **a check returns a confident result while measuring something adjacent to the question.** Not carelessness — the agent is careful. What catches it is always something structurally different looking at the same claim.
 
-**You may reject the premise of your task.** If the problem described does not exist, say so and stop. Three of five lanes that night corrected their own brief, and two of those corrections came from the person who wrote it. A correct "this isn't a bug" is worth more than a plausible fix.
+**You may reject the premise of your task.** If the problem described does not exist, say so and stop. Lanes have corrected their own brief — sometimes the correction came from the person who wrote it. A correct "this isn't a bug" is worth more than a plausible fix.
 
 **Prove your test measures the thing.** Delete your fix, keep your test, run it. If it still passes, the test is worthless. Paste RED and GREEN. Real cases: a contract test kept all four assertions green while the P1 it was named for was reintroduced (`String.contains` over a whole file); `expect(x).not.toBeNull()` passed with the serializer deleted (a missing key reads back as `undefined`); a suite passed 22/22 with the Mac chat route replaced by `Text("Mac chat is completely broken")`.
 
-**Read code from `origin/staging`, never the working checkout.** The main checkout sits on a detached HEAD, hundreds of commits behind. Reading it produced a confident, wrong diagnosis of a live bug and a proposed fix that would have leaked a session on every poll. Use `git show origin/staging:<path>`, and cite `origin/staging:<file>:<line>` so a reader can tell which tree a claim came from.
+**Read code from `origin/main`, never a stale working checkout.** A working checkout can sit on a detached HEAD, many commits behind. Reading a stale tree can produce a confident, wrong diagnosis of a live bug and a proposed fix that does harm. Use `git show origin/main:<path>`, and cite `origin/main:<file>:<line>` so a reader can tell which tree a claim came from.
 
 **Greps lie here in four documented ways.**
 
@@ -104,9 +104,9 @@ Every wrong answer in that session was wrong the *same way*: **a check returned 
 
 Also: `RemClaw.xcodeproj` is an Xcode 16 **synchronized-folder** project with zero `.swift` references in the pbxproj. "Not in project.pbxproj = dead" is worthless here.
 
-**A push is not a merge, and a commit count is not content.** Confirm your change reached the base branch. Squash merges discard SHAs, so `git log origin/staging..HEAD` lists everything and reads as "nothing landed" even when it did. Verify by content: `git show origin/staging:<path> | grep -c '<distinctive string>'`. Four commits were lost this way in one night, then nearly lost again the same hour.
+**A push is not a merge, and a commit count is not content.** Confirm your change reached the base branch. Squash merges discard SHAs, so `git log origin/main..HEAD` lists everything and reads as "nothing landed" even when it did. Verify by content: `git show origin/main:<path> | grep -c '<distinctive string>'`. Commits have been silently lost this way.
 
-**Known-red baselines — these are NOT yours.** The iOS suite is order- and load-dependent and already fails on clean `origin/staging` (7–12 failures, set shifts between runs in both directions); re-run in isolation with `-only-testing` before attributing a failure, **and before concluding your change is clean**. `Gateway Tests` intermittently fails on `live browser view` / `cross-site iframe must attach` under runner contention — CI has Chromium and it passes routinely, so it is a timing flake, not a missing service.
+**Known-red baselines — these are NOT yours.** The iOS suite is order- and load-dependent and already fails on clean `origin/main` (7–12 failures, set shifts between runs in both directions); re-run in isolation with `-only-testing` before attributing a failure, **and before concluding your change is clean**. `Gateway Tests` intermittently fails on `live browser view` / `cross-site iframe must attach` under runner contention — CI has Chromium and it passes routinely, so it is a timing flake, not a missing service.
 
 **CI compiles the Swift tests but does not run them.** A false assertion is green here forever. Do not read a green Apple check as "the tests pass."
 
