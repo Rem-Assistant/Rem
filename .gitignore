@@ -65,7 +65,14 @@ docs/hackathon/epics/epic-00-system-design.md
 # stay tracked; the paths below do not re-enter the open-core repo.
 docs/rebuild/
 docs/pr-evidence/
-docs/screenshots/
+docs/screenshots/*
+# Public README screenshots are committed by exception; internal PR-evidence
+# screenshots dropped into this folder stay ignored.
+!docs/screenshots/01-agenda.png
+!docs/screenshots/02-daily-brief.png
+!docs/screenshots/03-task-detail.png
+!docs/screenshots/04-settings.png
+!docs/screenshots/05-connectors.png
 docs/release/
 docs/investigations/
 docs/agentbox/

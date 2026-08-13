@@ -7,8 +7,10 @@ Rem is an open-core iOS and macOS personal AI assistant that turns a plain-langu
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/cqzreyNt5d)
 
-<!-- screenshot: replace with a hero screenshot or short demo GIF of the iOS + Mac apps -->
-<!-- ![Rem on iPhone and Mac](docs/screenshots/hero.png) -->
+<p align="center">
+  <img src="docs/screenshots/02-daily-brief.png" alt="Rem's Today surface on iPhone — an AI-authored daily brief above the day's agenda" width="300" />
+</p>
+<p align="center"><em>Rem's Today surface: an AI-authored daily brief above the day's agenda.</em></p>
 
 ## What Rem Is
 
@@ -21,6 +23,20 @@ You capture an intent in chat, voice, Agenda, or another low-friction surface, a
 > **Platform status:** the **iOS** app is the launched, actively-maintained product. The **macOS** app is **in active development and not yet officially launched** — it builds from this repo and is usable for development, but expect rough edges and breaking changes until it ships.
 
 Calendar provides timed context, Tasks carry executable intent, and Connectors make integrations understandable to normal users. Normal assistant work routes through a gateway you control.
+
+## Screenshots
+
+A quick tour of the iPhone app. These are captured from the app's built-in preview fixtures — every name, task, and email shown is mock data.
+
+| Agenda | Daily brief | Task detail |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/01-agenda.png" alt="Agenda showing today's scheduled tasks and events" width="230" /> | <img src="docs/screenshots/02-daily-brief.png" alt="Daily brief summarizing blocked, overdue, and on-deck work" width="230" /> | <img src="docs/screenshots/03-task-detail.png" alt="Task detail with the assistant's last activity and a reply composer" width="230" /> |
+| Your day at a glance — scheduled tasks and events. | An AI-authored recap of what's blocked, overdue, and on deck. | A task with the assistant's activity log, run controls, and comments. |
+
+| Settings | Connectors |
+|:---:|:---:|
+| <img src="docs/screenshots/04-settings.png" alt="Settings with account, agent runtime, permissions, and about" width="230" /> | <img src="docs/screenshots/05-connectors.png" alt="Connectors catalog listing Gmail, Google Calendar, Slack, GitHub, and more" width="230" /> |
+| Account, agent runtime status, permissions, and about. | Connect the apps Rem can act on, from Gmail to GitHub. |
 
 ## Quickstart
 
