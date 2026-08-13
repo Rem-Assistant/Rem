@@ -250,6 +250,23 @@ struct RemClawApp: App {
         false
         #endif
     }()
+    // Parent-list fixtures that push the detail via a real NavigationLink, so the
+    // captured screenshot shows the true pushed state (back chevron) rather than a
+    // standalone large-title root. Drive by launching the parent, tapping the row.
+    private let isTaskDetailNavFixture: Bool = {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--rem-agenda-to-task-fixture")
+        #else
+        false
+        #endif
+    }()
+    private let isConnectorsNavFixture: Bool = {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--rem-connectors-nav-fixture")
+        #else
+        false
+        #endif
+    }()
 
     /// Creates the local SwiftData container. In DEBUG, the store is namespaced
     /// by backend target so switching staging↔prod swaps data instead of wiping
@@ -299,7 +316,15 @@ struct RemClawApp: App {
                 // Effective backend the HTTP client actually uses (override wins),
                 // matching AuthenticatedHttpClient — so the banner can't show prod
                 // while traffic goes to an overridden non-prod backend.
-                .environmentBanner(backendURL: RemCredentialStore.backendURL ?? AppConfig.apiBaseURL)
+                //
+                // In DEBUG fixture/screenshot mode we resolve to a production-style
+                // host so the environment banner suppresses itself — the captured
+                // README shots must have a clean nav top with no LOCAL/dev badge.
+                .environmentBanner(
+                    backendURL: isFixtureMode
+                        ? "https://\(AppBackendEnvironment.productionHostToken).example"
+                        : (RemCredentialStore.backendURL ?? AppConfig.apiBaseURL)
+                )
                 .environment(gateway)
                 .environment(authService)
                 .environment(usageService)
@@ -481,6 +506,10 @@ struct RemClawApp: App {
             ReadmeAgendaFixtureView()
         } else if isDailyBriefFixture {
             ReadmeDailyBriefFixtureView()
+        } else if isTaskDetailNavFixture {
+            ReadmeTaskDetailNavFixtureView()
+        } else if isConnectorsNavFixture {
+            ReadmeConnectorsNavFixtureView()
         } else if isSessionPreviewFixture {
             SharedSessionPreviewFixtureView()
         } else if isCollaborationFixture {
@@ -583,6 +612,8 @@ struct RemClawApp: App {
             || isActivityHistoryFixture
             || isAgendaFixture
             || isDailyBriefFixture
+            || isTaskDetailNavFixture
+            || isConnectorsNavFixture
     }
 
     @ViewBuilder
