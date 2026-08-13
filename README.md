@@ -15,8 +15,10 @@ Rem is an open-core iOS and macOS personal AI assistant that turns a plain-langu
 You capture an intent in chat, voice, Agenda, or another low-friction surface, and Rem helps turn it into something that actually happens — a task, a calendar event, a note, a connector action, or an approved step run on one of your devices.
 
 - **iPhone** is the everyday command surface: capture, chat, voice, Agenda, inbox, permissions, connectors, and gateway selection.
-- **Mac** is a first-class Rem app and the preferred local gateway host for computer control — shell, files, clipboard, screen/app context, and local project state.
+- **Mac** *(in active development — not yet officially launched)* is intended as a first-class Rem app and the preferred local gateway host for computer control — shell, files, clipboard, screen/app context, and local project state.
 - The phone can ask the Mac at home, or a cloud gateway, to do approved work and return a concise result.
+
+> **Platform status:** the **iOS** app is the launched, actively-maintained product. The **macOS** app is **in active development and not yet officially launched** — it builds from this repo and is usable for development, but expect rough edges and breaking changes until it ships.
 
 Calendar provides timed context, Tasks carry executable intent, and Connectors make integrations understandable to normal users. Normal assistant work routes through a gateway you control.
 
