@@ -5,9 +5,11 @@ import SwiftData
 
 /// Flagship-Agenda README fixture. Drives the REAL `AgendaView` + `AgendaViewModel`
 /// with an in-memory store of mock tasks, a mock Daily Brief (header + suggestions),
-/// and a static bottom tab bar — so the captured screenshot matches the signed-in app
-/// (calendar header, brief header, sort control, Overdue section, Add New / Schedule,
-/// Suggestions). 100% mock data: no account, no network, no real names/emails.
+/// and the REAL main bottom toolbar (`remMainBottomToolbar`, the same controls
+/// `RemMainTabView` shows) inside a real `.bottomBar` toolbar group — so the captured
+/// screenshot matches the signed-in app (calendar header, brief header, sort control,
+/// Overdue section, Add New / Schedule, Suggestions, and the authentic tab bar chrome).
+/// 100% mock data: no account, no network, no real names/emails.
 ///
 /// Launch arg: `--rem-agenda-fixture`.
 struct ReadmeAgendaFullFixtureView: View {
@@ -50,18 +52,33 @@ struct ReadmeAgendaFullFixtureView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                AgendaView(
-                    viewModel: viewModel,
-                    onCreateTask: {},
-                    onOpenCalendarSettings: {},
-                    onOpenBriefChat: { _ in },
-                    onReadBrief: {}
-                )
-                ReadmeMockTabBar()
-            }
+            AgendaView(
+                viewModel: viewModel,
+                onCreateTask: {},
+                onOpenCalendarSettings: {},
+                onOpenBriefChat: { _ in },
+                onReadBrief: {}
+            )
             .modelContainer(container)
             .toolbar(.hidden, for: .navigationBar)
+            // Drive the REAL toolbar the app shows on the Agenda tab (hamburger ·
+            // new-chat · plus), not a hand-drawn copy. Agenda tab, no active session,
+            // first-use hint suppressed — inert closures (the fixture never navigates).
+            .toolbar {
+                ToolbarItemGroup(placement: .bottomBar) {
+                    remMainBottomToolbar(
+                        selectedTab: .agenda,
+                        hasActiveSession: false,
+                        firstUseHintPresented: .constant(false),
+                        onSelectTab: { _ in },
+                        onNewChat: {},
+                        onDismissFirstUseHint: {},
+                        onCreateTask: {},
+                        onNewFolder: {},
+                        onNewList: {}
+                    )
+                }
+            }
         }
     }
 
@@ -152,32 +169,6 @@ struct ReadmeAgendaFullFixtureView: View {
             headline: "Wednesday Evening",
             briefSessionKey: DailyBriefTranscriptReconciler.durableSessionKey
         )
-    }
-}
-
-/// Static reproduction of the app's bottom toolbar (hamburger · center chat/voice ·
-/// plus) so the flagship Agenda shot includes the tab bar the real app shows.
-private struct ReadmeMockTabBar: View {
-    var body: some View {
-        HStack {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(DesignTokens.Color.labelPrimary)
-            Spacer()
-            Image(systemName: "message.badge.waveform.fill")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 54, height: 38)
-                .background(DesignTokens.Color.brandBlue, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            Spacer()
-            Image(systemName: "plus")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(DesignTokens.Color.labelPrimary)
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
-        .background(.bar)
     }
 }
 

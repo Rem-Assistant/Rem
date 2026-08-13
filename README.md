@@ -8,9 +8,8 @@ Rem is an open-core iOS and macOS personal AI assistant that turns a plain-langu
 [![Discord](https://img.shields.io/badge/Discord-join%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/cqzreyNt5d)
 
 <p align="center">
-  <img src="docs/screenshots/02-daily-brief.png" alt="Rem's Today surface on iPhone — an AI-authored daily brief above the day's agenda" width="300" />
+  <img src="docs/screenshots/00-hero-agenda.png" alt="Rem on iPhone — your day as tasks, an AI-authored brief, and voice" width="300" />
 </p>
-<p align="center"><em>Rem's Today surface: an AI-authored daily brief above the day's agenda.</em></p>
 
 ## What Rem Is
 

@@ -68,6 +68,7 @@ docs/pr-evidence/
 docs/screenshots/*
 # Public README screenshots are committed by exception; internal PR-evidence
 # screenshots dropped into this folder stay ignored.
+!docs/screenshots/00-hero-agenda.png
 !docs/screenshots/01-agenda.png
 !docs/screenshots/02-daily-brief.png
 !docs/screenshots/03-task-detail.png
