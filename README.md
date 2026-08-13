@@ -33,10 +33,10 @@ A quick tour of the iPhone app. These are captured from the app's built-in previ
 | <img src="docs/screenshots/01-agenda.png" alt="Agenda showing today's scheduled tasks and events" width="230" /> | <img src="docs/screenshots/02-daily-brief.png" alt="Daily brief summarizing blocked, overdue, and on-deck work" width="230" /> | <img src="docs/screenshots/03-task-detail.png" alt="Task detail with the assistant's last activity and a reply composer" width="230" /> |
 | Your day at a glance — scheduled tasks and events. | An AI-authored recap of what's blocked, overdue, and on deck. | A task with the assistant's activity log, run controls, and comments. |
 
-| Settings | Connectors |
-|:---:|:---:|
-| <img src="docs/screenshots/04-settings.png" alt="Settings with account, agent runtime, permissions, and about" width="230" /> | <img src="docs/screenshots/05-connectors.png" alt="Connectors catalog listing Gmail, Google Calendar, Slack, GitHub, and more" width="230" /> |
-| Account, agent runtime status, permissions, and about. | Connect the apps Rem can act on, from Gmail to GitHub. |
+| Settings | Connectors | Chat |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/04-settings.png" alt="Settings with account, agent runtime, permissions, and about" width="230" /> | <img src="docs/screenshots/05-connectors.png" alt="Connectors catalog listing Gmail, Google Calendar, Slack, GitHub, and more" width="230" /> | <img src="docs/screenshots/06-chat.png" alt="Chat conversation where Rem tidies the inbox and drafts a reply" width="230" /> |
+| Account, agent runtime status, permissions, and about. | Connect the apps Rem can act on, from Gmail to GitHub. | Ask Rem in plain language; it works the task and reports back. |
 
 ## Quickstart
 

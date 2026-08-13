@@ -11,15 +11,6 @@ import SwiftUI
 /// - `--rem-agenda-fixture`      — Agenda populated with mock scheduled tasks/events.
 /// - `--rem-daily-brief-fixture` — Today surface: Daily Brief card + mock agenda rows.
 
-/// Agenda screen with mock scheduled tasks/events (`PreviewTaskStore(.scheduled)`).
-struct ReadmeAgendaFixtureView: View {
-    var body: some View {
-        NavigationStack {
-            SharedAgendaView(store: PreviewTaskStore(scenario: .scheduled))
-        }
-    }
-}
-
 /// Today surface: the AI-authored Daily Brief card sitting above the day's mock agenda,
 /// mirroring how the real app inserts the brief at the top of today's Agenda.
 struct ReadmeDailyBriefFixtureView: View {
@@ -180,6 +171,9 @@ struct ReadmeConnectorsNavFixtureView: View {
                     NavigationLink {
                         SharedComposioConnectionsView(service: MockComposioService())
                             .environment(\.openURL, OpenURLAction { _ in .handled })
+                            // Match the real app: pushed Connectors uses the small
+                            // inline centered nav title, not a large title.
+                            .navigationBarTitleDisplayMode(.inline)
                     } label: {
                         Label("Connectors", systemImage: "puzzlepiece.extension.fill")
                     }

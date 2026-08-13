@@ -73,6 +73,7 @@ docs/screenshots/*
 !docs/screenshots/03-task-detail.png
 !docs/screenshots/04-settings.png
 !docs/screenshots/05-connectors.png
+!docs/screenshots/06-chat.png
 docs/release/
 docs/investigations/
 docs/agentbox/

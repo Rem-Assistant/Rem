@@ -267,6 +267,13 @@ struct RemClawApp: App {
         false
         #endif
     }()
+    private let isChatFixture: Bool = {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--rem-chat-fixture")
+        #else
+        false
+        #endif
+    }()
 
     /// Creates the local SwiftData container. In DEBUG, the store is namespaced
     /// by backend target so switching staging↔prod swaps data instead of wiping
@@ -503,13 +510,15 @@ struct RemClawApp: App {
     private var rootContent: some View {
         #if DEBUG
         if isAgendaFixture {
-            ReadmeAgendaFixtureView()
+            ReadmeAgendaFullFixtureView()
         } else if isDailyBriefFixture {
             ReadmeDailyBriefFixtureView()
         } else if isTaskDetailNavFixture {
             ReadmeTaskDetailNavFixtureView()
         } else if isConnectorsNavFixture {
             ReadmeConnectorsNavFixtureView()
+        } else if isChatFixture {
+            ReadmeChatFixtureView()
         } else if isSessionPreviewFixture {
             SharedSessionPreviewFixtureView()
         } else if isCollaborationFixture {
@@ -614,6 +623,7 @@ struct RemClawApp: App {
             || isDailyBriefFixture
             || isTaskDetailNavFixture
             || isConnectorsNavFixture
+            || isChatFixture
     }
 
     @ViewBuilder
