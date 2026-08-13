@@ -193,7 +193,7 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   `task-staleness.service.ts` for the exhaustive list and the reasoning.
 - **`description` is CO-AUTHORED** (migration 120, `task-description.ts` +
   `task-description.service.ts`). It is the "what I know NOW" surface from
-  `docs/product/DECISIONS.md`, as opposed to `task_comments` ("what happened each run") and
+  the founder's product model, as opposed to `task_comments` ("what happened each run") and
   chat ("the conversation"). One column holds both authors, separated by an agent-managed
   block delimiter, and each side may write only its own half:
   `PATCH /tasks/:id` with `description` replaces the USER's text and preserves Rem's block;

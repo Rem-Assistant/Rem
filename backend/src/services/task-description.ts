@@ -6,13 +6,13 @@
  * connection pool — and a `DATABASE_URL` requirement — into their tests. The writers that
  * touch Postgres live in `task-description.service.ts`, which re-exports everything here.
  *
- * docs/product/DECISIONS.md, "Task description vs comments vs chat":
+ * Product decision — "Task description vs comments vs chat":
  *   tasks.description  current state, updated in place   <- this file
  *   task_comments      append-only log of each run       (already exists)
  *   chat               the conversation                  (session_id)
  *
  * THE CLOBBER PROBLEM. Both the user and the agent write here. `task_comments` is
- * append-only and therefore safe; `description` is not. DECISIONS.md states the
+ * append-only and therefore safe; `description` is not. The product decision states the
  * constraint directly: "if the agent maintains it, user-authored text must not be
  * silently overwritten."
  *
@@ -31,7 +31,7 @@
  *
  * WHY A DELIMITER RATHER THAN THE ALTERNATIVES.
  *   - Two columns (`description` + `agent_context`) is the same idea with stronger
- *     enforcement, but it splits one product noun in two: DECISIONS.md's model is a
+ *     enforcement, but it splits one product noun in two: the product model is a
  *     single description that reads as one thing ("keeping things thin"), and every
  *     consumer that wants the whole picture would have to concatenate them anyway.
  *   - Last-writer-wins-with-the-user-winning (a `description_updated_by` flag, agent may

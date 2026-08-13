@@ -7,7 +7,7 @@
  * correct in isolation (there is a unit test for it too). Every way this feature can be
  * wrong lives in the wiring:
  *   - the run writes `description` with a plain UPDATE and silently eats what the user
- *     typed — the exact failure DECISIONS.md names;
+ *     typed — the exact failure the product decision names;
  *   - the user's PATCH writes the whole column and silently eats the agent's block;
  *   - the run writes a block but the next run's prompt never reads it back, so runs keep
  *     starting from zero and the column is decoration;

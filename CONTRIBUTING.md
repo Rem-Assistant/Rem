@@ -90,8 +90,8 @@ produce a helpful error — it produces a wall of "no such module" failures, and
 it has broken our own builds.
 
 ```bash
-git clone --recurse-submodules https://github.com/Rem-Assistant/RemClaw.git
-cd RemClaw
+git clone --recurse-submodules https://github.com/Rem-Assistant/Rem.git
+cd Rem
 ```
 
 Already cloned flat:
@@ -129,8 +129,10 @@ make test-all
 xcodebuild -project RemClaw.xcodeproj -scheme RemClawMac \
   -destination 'platform=macOS' build
 
-# Backend
-cd backend && npm install && npm run build && npm test
+# Backend — build/typecheck runs offline with no keys and no database:
+cd backend && npm install && npm run build
+# Integration tests need a local PostgreSQL 16 (set DATABASE_URL / TEST_DATABASE_URL):
+npm run test:integration
 ```
 
 Two gotchas that will cost you an hour each if you hit them cold:

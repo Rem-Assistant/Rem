@@ -1,6 +1,6 @@
 # Source taxonomy — what a connected system is allowed to do to Rem's data
 
-Companion to [DECISIONS.md](DECISIONS.md), same format: the decision, why, and what it rules out.
+Records product decisions in the same format: the decision, why, and what it rules out.
 
 **Read this before adding a connector to the ingestion path, or before letting anything a connector
 returns become a row.** The existing plan assumed every connected toolkit ingests the same way. It
@@ -146,7 +146,7 @@ suggestion. Nothing in this document changes it.
 at ingest, surface a suggestion the user accepts or dismisses.
 
 **Must not:** create a task without the user accepting one. That is the approval rule in
-DECISIONS.md, and it is what keeps a signal source from becoming a writer.
+our product decisions, and it is what keeps a signal source from becoming a writer.
 
 ### Mirror — watch it, describe it, never write it
 
@@ -317,7 +317,7 @@ the same pressure. Generalizing this is not a plan; it is the same fifteen lines
 radius.
 
 The repo's only other similarity metric is a Jaccard scorer in `memory-extraction.service.ts:178-203`
-(`DEFAULT_DEDUP_THRESHOLD = 0.6`) — in the memory subsystem DECISIONS.md retired and schedules for
+(`DEFAULT_DEDUP_THRESHOLD = 0.6`) — in the memory subsystem the product decisions retired and schedule for
 deletion. The only two fuzzy matchers we have are one that resolves ties arbitrarily and one in code
 we are removing.
 
@@ -911,7 +911,7 @@ duplicate `source` (`:298-303`). One string cannot carry two kinds.
 
 ### Relationship to schemaless ingestion
 
-DECISIONS.md already decided that per-connector descriptors don't scale and all connectors should be
+The product decisions already established that per-connector descriptors don't scale and all connectors should be
 ingestable by default. **This doc does not reverse that — it gates it.**
 
 Those two answer different questions. Schemaless ingestion answers *"how do we read arbitrary

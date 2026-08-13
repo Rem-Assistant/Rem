@@ -62,9 +62,18 @@ make test
 # macOS build
 xcodebuild -project RemClaw.xcodeproj -scheme RemClawMac -destination 'platform=macOS' build
 
-# Backend
-cd backend && npm ci && npm run build && npm test
+# Backend (build/typecheck runs offline, no keys or database needed)
+cd backend && npm ci && npm run build
+# Integration tests need a local PostgreSQL 16:
+npm run test:integration
 ```
+
+> **Running without API keys or an account:** a clean clone **builds** both apps
+> and the backend with no secrets. You cannot sign in or use the live assistant
+> without a Rem account (see [CONTRIBUTING.md](CONTRIBUTING.md) — "what you can and
+> cannot run today"); iterate on UI with the `--rem-*-fixture` debug launch
+> arguments, which render individual screens against canned data before the
+> sign-in gate.
 
 Configuration lives in `RemClaw/.env.Debug.xcconfig` / `.env.Release.xcconfig` (iOS) and the matching `RemClawMac/*.xcconfig` files. The committed values are placeholders (`YOUR_BACKEND_URL`, `YOUR_GOOGLE_CLIENT_ID`, `YOUR_POSTHOG_API_KEY`) — point them at your own backend and OAuth/telemetry accounts. Use the untracked `Debug.local.xcconfig` / `Release.local.xcconfig` overrides so your values never land in a commit. Backend config starts from `backend/.env.local.example`.
 

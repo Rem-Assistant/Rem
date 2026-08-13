@@ -30,7 +30,7 @@ public enum TaskDeemphasisReason: String, Sendable, Hashable, CaseIterable, Coda
     case stale
 
     /// The pill text. Deliberately the same word the column, the migration and
-    /// `docs/product/DECISIONS.md` use: a UI word that doesn't map back to the stored fact is how
+    /// the product decision use: a UI word that doesn't map back to the stored fact is how
     /// client and server start disagreeing about what the user was told.
     public var label: String {
         switch self {

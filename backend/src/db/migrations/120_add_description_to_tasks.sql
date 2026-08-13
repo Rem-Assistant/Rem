@@ -1,5 +1,5 @@
 -- Task description — the third surface in the founder's model
--- (docs/product/DECISIONS.md, "Task description vs comments vs chat"):
+-- (product decision — "Task description vs comments vs chat"):
 --
 --   tasks.description  what I know NOW      current state, updated in place   <- THIS
 --   task_comments      what happened        append-only log ("view history")
