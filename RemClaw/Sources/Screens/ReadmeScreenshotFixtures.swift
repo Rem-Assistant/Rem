@@ -99,34 +99,56 @@ struct ReadmeTaskDetailNavFixtureView: View {
     }
 }
 
-/// The task-detail body, mirroring `TaskCollaborationFixtureView` but WITHOUT its
-/// own `NavigationStack`, so it can be pushed as a `NavigationLink` destination and
-/// inherit a back chevron. Reuses the same mock comment components.
+/// The task-detail body, mirroring the REAL `TaskEventView.mergedEditableContent`
+/// vertical order — Title → date/schedule details → LAST ACTIVITY (+ Run now /
+/// View history) → notes/description → docked composer — WITHOUT its own
+/// `NavigationStack`, so it can be pushed as a `NavigationLink` destination and
+/// inherit a back chevron. Drives the real shared components (`EditableTaskDetailsSection`,
+/// `TaskCommentsThread`, `TaskCommentComposer`) seeded with mock data.
 private struct ReadmeTaskDetailContent: View {
     @State private var model = TaskCommentsModel()
+    /// Empty so the notes area shows its "Add your notes here" placeholder, exactly like
+    /// `TaskEventView.notesSection`'s empty state.
+    @State private var notes = ""
 
     var body: some View {
         ZStack {
             DesignTokens.Color.backgroundPrimary.ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                // spacing 0 + per-section self-padding mirrors TaskEventView, which pads
+                // each block itself rather than adding outer spacing/padding.
+                VStack(alignment: .leading, spacing: 0) {
+                    // Title
                     Text("Check emails and update on the latest recruiter thread")
                         .font(DesignTokens.Typography.title1Bold)
+                        .foregroundColor(DesignTokens.Color.labelPrimary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Label("Jun 27, 2026 at 12:00 PM", systemImage: "clock")
-                        .font(DesignTokens.Typography.footnote)
-                        .foregroundStyle(DesignTokens.Color.labelSecondary)
-                    Text("Add your notes here")
-                        .font(DesignTokens.Typography.body)
-                        .foregroundStyle(DesignTokens.Color.labelTertiary)
-                        .padding(.top, DesignTokens.Spacing.sm)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, DesignTokens.Spacing.md)
+                        .padding(.vertical, DesignTokens.Spacing.sm)
 
+                    // Date / time details — the REAL component (clock + formatted date,
+                    // then the alert / repeat / duration pills), same as TaskEventView.
+                    EditableTaskDetailsSection(
+                        startDate: Self.mockStartDate,
+                        endDate: nil,
+                        alertTime: nil,
+                        repeatFrequency: nil,
+                        duration: nil,
+                        isEvent: false,
+                        isAnyTime: false,
+                        onTap: {}
+                    )
+
+                    // Activity log — sits ABOVE notes (the primary collaboration surface).
                     TaskCommentsThread(model: model)
-                        .padding(.top, DesignTokens.Spacing.sm)
+
+                    // Notes / description — BELOW the activity block, mirroring
+                    // TaskEventView.notesSection's empty state.
+                    notesSection
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(DesignTokens.Spacing.md)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 // Doorway composer — the SAME wiring the real `TaskEventView` uses:
@@ -160,6 +182,35 @@ private struct ReadmeTaskDetailContent: View {
             )
             await model.load()
         }
+    }
+
+    /// Mirrors `TaskEventView.notesSection` (empty state): an inert `TextEditor` with the
+    /// "Add your notes here" placeholder overlaid, positioned below the activity block.
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TextEditor(text: $notes)
+                .font(DesignTokens.Typography.body)
+                .foregroundColor(DesignTokens.Color.labelPrimary)
+                .frame(minHeight: 120)
+                .scrollContentBackground(.hidden)
+                .overlay(alignment: .topLeading) {
+                    if notes.isEmpty {
+                        Text("Add your notes here")
+                            .font(DesignTokens.Typography.body)
+                            .foregroundColor(DesignTokens.Color.labelSecondary)
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+    }
+
+    /// A fixed "today at 12:00 PM" so the date row reads as a set, scheduled task.
+    private static var mockStartDate: Date {
+        Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
     }
 
     /// A single-run activity whose most-recent (inline-surfaced) entry is a **cloud** Rem
