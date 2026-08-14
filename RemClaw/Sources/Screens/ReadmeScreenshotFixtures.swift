@@ -129,7 +129,10 @@ private struct ReadmeTaskDetailContent: View {
                 .padding(DesignTokens.Spacing.md)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                TaskCommentComposer(model: model)
+                // Doorway composer — the SAME wiring the real `TaskEventView` uses:
+                // `onOpenChat` non-nil puts the composer in "Continue in chat…" mode with the
+                // blue arrow-up-right send (not the inline "Add a reply…" grey arrow).
+                TaskCommentComposer(model: model, onOpenChat: { _ in })
                     .padding(.horizontal, DesignTokens.Spacing.md)
                     .padding(.top, DesignTokens.Spacing.md)
                     .padding(.bottom, DesignTokens.Spacing.sm)
@@ -150,13 +153,43 @@ private struct ReadmeTaskDetailContent: View {
             model.configure(
                 taskId: "task-fixture",
                 service: MockTaskCommentService(
-                    thread: MockTaskCommentService.sampleThread(),
+                    thread: Self.remActivityThread(),
                     simulatedDelay: .zero
                 ),
                 commitStatus: { _ in }
             )
             await model.load()
         }
+    }
+
+    /// A single-run activity whose most-recent (inline-surfaced) entry is a **cloud** Rem
+    /// run (`.cloudAgent`), so `TaskActivityRow` renders the branded blue Rem avatar — the
+    /// real signed-in state — not the green local-runtime tint. 100% mock, no real data.
+    private static func remActivityThread() -> [TaskComment] {
+        func iso(_ secondsAgo: TimeInterval) -> String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return formatter.string(from: Date().addingTimeInterval(-secondsAgo))
+        }
+        return [
+            TaskComment(
+                id: "readme-user-1",
+                taskId: "task-fixture",
+                authorKind: .user,
+                authorLabel: "You",
+                body: "Can you clear out my inbox before I start my day?",
+                createdAt: iso(2 * 3600 + 300)
+            ),
+            TaskComment(
+                id: "readme-rem-1",
+                taskId: "task-fixture",
+                authorKind: .cloudAgent,
+                authorLabel: TaskRuntimeKind.gateway.displayName,
+                body: "Archived 38 newsletters and snoozed 5 low-priority threads. Two threads still look like they need you — I flagged them at the top.",
+                runtime: .gateway,
+                createdAt: iso(2 * 3600)
+            ),
+        ]
     }
 }
 
