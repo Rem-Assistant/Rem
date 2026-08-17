@@ -3,7 +3,7 @@
 Rem is an open-core iOS and macOS personal AI assistant that turns a plain-language intent into a task, event, note, connector action, or a step executed on one of your own devices.
 
 [![Release](https://img.shields.io/badge/release-preview-blue)](https://github.com/Rem-Assistant/Rem/releases)
-[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20macOS-lightgrey)](#what-rem-is)
+[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20macOS%20%7C%20Android%20preview-lightgrey)](#what-rem-is)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/cqzreyNt5d)
 
@@ -16,10 +16,11 @@ Rem is an open-core iOS and macOS personal AI assistant that turns a plain-langu
 You capture an intent in chat, voice, Agenda, or another low-friction surface, and Rem helps turn it into something that actually happens — a task, a calendar event, a note, a connector action, or an approved step run on one of your devices.
 
 - **iPhone** is the everyday command surface: capture, chat, voice, Agenda, inbox, permissions, connectors, and gateway selection.
+- **Android** *(early dogfood, not on Google Play)* is a native Kotlin / Compose client in `android/`. Same Rem account and backends; not an iPhone copy yet. See [android/README.md](android/README.md).
 - **Mac** *(in active development — not yet officially launched)* is intended as a first-class Rem app and the preferred local gateway host for computer control — shell, files, clipboard, screen/app context, and local project state.
 - The phone can ask the Mac at home, or a cloud gateway, to do approved work and return a concise result.
 
-> **Platform status:** the **iOS** app is the launched, actively-maintained product. The **macOS** app is **in active development and not yet officially launched** — it builds from this repo and is usable for development, but expect rough edges and breaking changes until it ships.
+> **Platform status:** the **iOS** app is the launched, actively-maintained product. The **macOS** app is **in active development and not yet officially launched**. The **Android** app is early dogfood — it builds from this repo, but it is not Play-ready and it is behind the iPhone client.
 
 Calendar provides timed context, Tasks carry executable intent, and Connectors make integrations understandable to normal users. Normal assistant work routes through a gateway you control.
 
@@ -65,6 +66,9 @@ xcodebuild -project RemClaw.xcodeproj -scheme RemClawMac -destination 'platform=
 cd backend && npm ci && npm run build
 # Integration tests need a local PostgreSQL 16:
 npm run test:integration
+
+# Android dogfood client (needs Android Studio / SDK; see android/README.md)
+cd android && ./gradlew :app:assembleDebug
 ```
 
 > **Running without API keys or an account:** a clean clone **builds** both apps
@@ -74,13 +78,13 @@ npm run test:integration
 > arguments, which render individual screens against canned data before the
 > sign-in gate.
 
-Configuration lives in `RemClaw/.env.Debug.xcconfig` / `.env.Release.xcconfig` (iOS) and the matching `RemClawMac/*.xcconfig` files. The committed values are placeholders (`YOUR_BACKEND_URL`, `YOUR_GOOGLE_CLIENT_ID`, `YOUR_POSTHOG_API_KEY`) — point them at your own backend and OAuth/telemetry accounts. Use the untracked `Debug.local.xcconfig` / `Release.local.xcconfig` overrides so your values never land in a commit. Backend config starts from `backend/.env.local.example`.
+Configuration lives in `RemClaw/.env.Debug.xcconfig` / `.env.Release.xcconfig` (iOS) and the matching `RemClawMac/*.xcconfig` files. The committed values are placeholders (`YOUR_BACKEND_URL`, `YOUR_GOOGLE_CLIENT_ID`, `YOUR_POSTHOG_API_KEY`) — point them at your own backend and OAuth/telemetry accounts. Use the untracked `Debug.local.xcconfig` / `Release.local.xcconfig` overrides so your values never land in a commit. Android uses the same placeholder pattern via untracked `android/local.properties` (see `android/local.properties.example`). Backend config starts from `backend/.env.local.example`.
 
 ## Architecture
 
 Rem is a **app → gateway → devices** system:
 
-- **App** (iOS + macOS) — SwiftUI clients for capture, chat/voice, Agenda, inbox, settings, permissions, and connectors. Shared models, protocols, and views live in `Shared/` and work on both platforms via a protocol-oriented session manager.
+- **App** (iOS, macOS, and an early Android dogfood client) — clients for capture, chat/voice, Agenda, inbox, settings, permissions, and connectors. Shared Swift models, protocols, and views live in `Shared/` and work on iOS and macOS via a protocol-oriented session manager. Android is a separate Kotlin / Compose tree under `android/`.
 - **Gateway** — a per-user OpenClaw gateway (self-hosted on your Mac, or a managed cloud gateway) that the app connects to over two WebSocket sessions: a node session that advertises device capabilities and a operator session that carries chat. Conversations and memory live on the gateway you own, not on a central server.
 - **Devices** — the Mac (and iOS device tools) expose approved local capabilities — shell, files, calendar, reminders, contacts, notifications, location — that the AI can invoke through the gateway with per-command permissions.
 
@@ -92,6 +96,7 @@ A thin Node/Express backend handles identity, billing, gateway provisioning, enc
 | `RemClawMac/` | macOS app target (Dock app + menu bar extra + local gateway host). |
 | `Shared/` | Cross-platform models, protocols, services, and SwiftUI surfaces. |
 | `backend/` | Node/Express backend: auth, gateway provisioning, connector APIs. |
+| `android/` | Native Android dogfood client (Kotlin / Compose). Not Play-ready. |
 | `openclaw/` | Git submodule for upstream OpenClaw and shared OpenClawKit code. |
 | `docs/` | Product and architecture documentation. Start at [docs/product/VISION.md](docs/product/VISION.md). |
 

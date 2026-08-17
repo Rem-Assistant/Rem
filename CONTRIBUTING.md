@@ -75,6 +75,7 @@ often the only way a reviewer can see your change.
 | Tool | Version | Needed for |
 |---|---|---|
 | macOS + Xcode | **Xcode 26 or newer** — both app targets set a deployment target of `26.0` | iOS and macOS apps |
+| Android Studio + Android SDK | SDK 26+ (compile/target 36); the JDK that ships with Android Studio | Android dogfood client under `android/` |
 | Node.js | **20+** for `backend/` | backend |
 | PostgreSQL | 16 (what CI runs) | backend tests |
 | Git | any recent version, but see the submodule note | everything |
@@ -129,6 +130,9 @@ make test-all
 xcodebuild -project RemClaw.xcodeproj -scheme RemClawMac \
   -destination 'platform=macOS' build
 
+# Android dogfood client (see android/README.md)
+cd android && ./gradlew :app:assembleDebug
+
 # Backend — build/typecheck runs offline with no keys and no database:
 cd backend && npm install && npm run build
 # Integration tests need a local PostgreSQL 16 (set DATABASE_URL / TEST_DATABASE_URL):
@@ -154,6 +158,7 @@ and a build of both `RemClaw` and `RemClawMac` schemes.
 |---|---|
 | `RemClaw/` | iOS app |
 | `RemClawMac/` | macOS app — menu bar, local gateway host |
+| `android/` | Native Android dogfood client (Kotlin / Compose). Early; not Play-ready. |
 | `Shared/` | Cross-platform models, protocols, and SwiftUI views used by both apps |
 | `backend/` | Node/Express: auth, gateway provisioning, connectors |
 | `openclaw/` | Submodule: our MIT fork of upstream OpenClaw |
