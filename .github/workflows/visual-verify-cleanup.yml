@@ -1,11 +1,12 @@
 name: Visual Verify — cleanup
 
-# Keep the screenshot store bounded: when a PR closes, remove its folder from the
-# visual-verify-shots branch. Runs on free Linux (no macOS needed). Because the
-# verify workflow references images by BRANCH url (not commit SHA), a periodic
-# `git checkout --orphan` squash of this branch can later reclaim .git history
-# without breaking any open PR's images — add that only if the branch ever grows
-# large; day to day the per-PR overwrite + this cleanup keep the tip small.
+# Keep the store bounded WITHOUT losing merged-PR history: when a PR is closed
+# WITHOUT merging (abandoned work), remove its folder from the visual-verify-shots
+# branch. MERGED PRs KEEP their screenshots as a durable visual record. Runs on
+# free Linux. Because images are referenced by BRANCH url (not commit SHA), a
+# `git checkout --orphan` squash of this branch can later reclaim .git churn
+# history without breaking any live image — run that manually if the kept set of
+# merged-PR screenshots ever makes clones heavy.
 
 on:
   pull_request:
@@ -16,9 +17,11 @@ permissions:
 
 jobs:
   cleanup:
+    # Only abandoned PRs (closed without merging). Merged PRs keep their record.
+    if: ${{ github.event.pull_request.merged == false }}
     runs-on: ubuntu-latest
     steps:
-      - name: Remove this PR's screenshots from the shots branch
+      - name: Remove an abandoned PR's screenshots from the shots branch
         env:
           GH_TOKEN: ${{ github.token }}
           PRNUM: ${{ github.event.pull_request.number }}

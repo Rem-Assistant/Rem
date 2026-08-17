@@ -9,11 +9,11 @@
 #   - Images referenced by BRANCH URL (+ a `?<sha>` cache-bust), not by commit SHA.
 #     That means a periodic squash can reclaim history WITHOUT breaking the images
 #     shown in open PRs (they point at the branch tip, which the squash preserves).
-#   - A companion workflow (visual-verify-cleanup.yml) deletes a PR's folder and
-#     squashes the branch when the PR closes.
-#   This trades "immortal SHA-pinned images" for "bounded, review-lifetime images"
-#   — the right call for review evidence: you need the screens during review, not
-#   forever. Committed copies are downscaled (shown at 200px, stored at 600px);
+#   - A companion workflow (visual-verify-cleanup.yml) removes a PR's folder only
+#     when it is closed WITHOUT merging (abandoned); MERGED PRs keep their record.
+#   This trades "immortal SHA-pinned images" for "branch-ref images, kept for merged
+#   PRs and reclaimable by squash" — the right call for review evidence. Committed
+#   copies are downscaled (shown at 200px, stored at 600px);
 #   full-res stays in the run artifact.
 #
 # Env (from the workflow): GH_TOKEN, PRNUM, HEADSHA, GITHUB_REPOSITORY.
@@ -74,7 +74,7 @@ BODY="$(mktemp)"
   done
   [ -n "$row" ] && echo "${row}|  |"
   echo
-  echo "<sub>Rendered from the app's \`--rem-*-fixture\` launch args · mock data only · one bounded folder per PR, removed when the PR closes.</sub>"
+  echo "<sub>Rendered from the app's \`--rem-*-fixture\` launch args · mock data only · kept for merged PRs; removed only if the PR is abandoned.</sub>"
 } > "$BODY"
 
 PAYLOAD="$(mktemp)"
