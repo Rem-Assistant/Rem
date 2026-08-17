@@ -1,0 +1,42 @@
+name: Visual Verify — cleanup
+
+# Keep the screenshot store bounded: when a PR closes, remove its folder from the
+# visual-verify-shots branch. Runs on free Linux (no macOS needed). Because the
+# verify workflow references images by BRANCH url (not commit SHA), a periodic
+# `git checkout --orphan` squash of this branch can later reclaim .git history
+# without breaking any open PR's images — add that only if the branch ever grows
+# large; day to day the per-PR overwrite + this cleanup keep the tip small.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove this PR's screenshots from the shots branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNUM: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          B="visual-verify-shots"
+          AUTH="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git ls-remote --exit-code --heads "$AUTH" "$B" >/dev/null 2>&1 || { echo "no shots branch yet"; exit 0; }
+          TMP="$(mktemp -d)"
+          git clone --quiet --depth 1 --branch "$B" "$AUTH" "$TMP"
+          cd "$TMP"
+          if [ -d "pr-${PRNUM}" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git rm -rq "pr-${PRNUM}"
+            git commit --quiet -m "visual-verify: remove screenshots for closed PR #${PRNUM}"
+            git push --quiet origin "HEAD:${B}"
+            echo "removed pr-${PRNUM}"
+          else
+            echo "nothing to remove for PR #${PRNUM}"
+          fi
