@@ -1,0 +1,86 @@
+name: Visual Verify (iOS)
+
+# The VERIFY stage of the autonomous pipeline: screenshot the changed screens so a
+# UI change is confirmed by looking, not by trusting a green unit test.
+#
+# COST GUARD: macOS runners are ~10x Linux minutes. This workflow therefore runs
+# ONLY on explicit demand — a manual dispatch, or a PR that carries the
+# `visual-verify` label — never automatically on every push. On the PUBLIC
+# open-core repo macOS minutes are free; on a private repo they are billed, so
+# keep it label-gated there (or move iOS dev to the public repo — see
+# docs/dev/REPO_SPLIT_AND_PR_HYGIENE.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixtures:
+        description: "Fixtures to shoot: blank = CORE set, 'all', or a space-separated subset (stems, e.g. 'task-detail settings')"
+        required: false
+        default: ""
+  pull_request:
+    types: [labeled, synchronize]
+    paths:
+      - "RemClaw/**"
+      - "Shared/Views/**"
+      - "RemClaw.xcodeproj/**"
+      - ".github/workflows/visual-verify.yml"
+      - "scripts/visual-verify*.sh"
+
+concurrency:
+  group: visual-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+# contents: write → host screenshots on the visual-verify-shots branch.
+# pull-requests: write → post the sticky screenshot comment.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  screenshots:
+    # Gate: manual dispatch always; PR events only when the 'visual-verify' label is present.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'visual-verify')
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Bootstrap submodules
+        run: make bootstrap-submodules || true
+
+      # Cache the two expensive things so repeat runs are fast (the build is ~80%
+      # of the cost). Keyed on the resolved SPM graph + project file.
+      - name: Cache DerivedData + SPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            BuildResults/VisualVerify
+            ~/Library/Caches/org.swift.swiftpm
+          key: vv-${{ runner.os }}-${{ hashFiles('**/Package.resolved', 'RemClaw.xcodeproj/project.pbxproj') }}
+          restore-keys: vv-${{ runner.os }}-
+
+      - name: Screenshot fixtures
+        run: bash scripts/visual-verify.sh ${{ github.event.inputs.fixtures }}
+
+      - name: Upload screenshots (artifact fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-verify-screenshots
+          path: visual-verify-out/*.png
+          if-no-files-found: warn
+
+      # The point: review the screens IN the PR thread, not by digging into the
+      # artifacts tab. Hosts the PNGs on a durable branch and posts a sticky
+      # comment with inline images (commit-SHA raw URLs survive branch deletion).
+      - name: Post screenshots as a sticky PR comment
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNUM: ${{ github.event.pull_request.number }}
+          HEADSHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/visual-verify-publish.sh
