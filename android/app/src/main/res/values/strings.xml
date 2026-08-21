@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rem</string>
+    <string name="mic_permission_rationale">Rem needs the microphone so you can talk in Speak mode.</string>
+    <string name="calendar_permission_rationale">Rem needs calendar access to show today’s events on Agenda.</string>
+    <string name="notifications_permission_rationale">Rem needs notifications to remind you about tasks.</string>
+</resources>

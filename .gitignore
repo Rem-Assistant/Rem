@@ -17,6 +17,24 @@ _reference/
 .env.local
 build/
 
+# Android / Gradle (SDK path and local backend overrides stay on the machine)
+android/.gradle/
+android/**/.kotlin/
+android/**/build/
+android/local.properties
+android/*.iml
+android/.idea/
+android/captures/
+android/.cxx/
+android/**/*.jks
+android/**/*.keystore
+android/keystore.properties
+redmi-*.png
+*.apk
+*.aab
+*.ap_
+*.dex
+
 # Local secret/config overrides. NEVER commit these.
 #
 # The tracked `RemClaw/.env.*.xcconfig` files hold only values that are safe in a public
