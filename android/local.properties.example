@@ -1,0 +1,12 @@
+## Copy this file to local.properties (that file is gitignored).
+## Android Studio usually writes sdk.dir for you.
+
+sdk.dir=/Users/YOUR_USER/Library/Android/sdk
+
+## Optional. Tracked Gradle defaults are placeholders (YOUR_BACKEND_URL /
+## YOUR_GOOGLE_CLIENT_ID), matching the iOS xcconfig pattern. Set these to
+## talk to a real Rem backend. The debug app still builds without them.
+
+# REM_API_BASE_URL_STAGING=https://YOUR_STAGING_BACKEND
+# REM_API_BASE_URL_PRODUCTION=https://YOUR_PRODUCTION_BACKEND
+# REM_GOOGLE_SERVER_CLIENT_ID=YOUR.apps.googleusercontent.com
