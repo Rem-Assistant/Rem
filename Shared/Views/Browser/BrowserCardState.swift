@@ -1,7 +1,7 @@
 import Foundation
-import OpenClawChatUI
-import OpenClawKit
-import OpenClawProtocol
+import RemChatUI
+import RemKit
+import RemProtocol
 
 /// What the in-chat "Rem's browser session" card should show for the current conversation.
 enum BrowserCardPresentation: Equatable {
@@ -153,7 +153,7 @@ enum BrowserCardStateResolver {
     /// non-interactive until this run has real browser/canvas evidence. Historical ownership from a
     /// prior turn is deliberately irrelevant here.
     static func canPresentLiveBrowser(
-        messages: [OpenClawChatMessage],
+        messages: [RemChatMessage],
         pendingRunCount: Int,
         activeRunEvidences: [BrowserRunEvidence]
     ) -> Bool {
@@ -175,7 +175,7 @@ enum BrowserCardStateResolver {
     ///   - isSessionEnded: whether explicit user/agent teardown ended this owner's browser session.
     ///   - activeRunEvidence: live browser tool state observed before the transcript refreshes.
     static func resolve(
-        messages: [OpenClawChatMessage],
+        messages: [RemChatMessage],
         pendingRunCount: Int,
         isOwner: Bool,
         isSessionEnded: Bool,
@@ -192,7 +192,7 @@ enum BrowserCardStateResolver {
     }
 
     static func resolve(
-        messages: [OpenClawChatMessage],
+        messages: [RemChatMessage],
         pendingRunCount _: Int,
         isOwner: Bool,
         isSessionEnded: Bool,
@@ -219,7 +219,7 @@ enum BrowserCardStateResolver {
     /// Did the CURRENT turn — everything after the last user message — touch the browser? This is how
     /// "Rem is browsing right now" is told apart from "an old, unclosed `browser navigate` still sits
     /// in the history": an unrelated later turn appends no browser tool call after its user message.
-    static func currentTurnTouchedBrowser(_ messages: [OpenClawChatMessage]) -> Bool {
+    static func currentTurnTouchedBrowser(_ messages: [RemChatMessage]) -> Bool {
         let start = messages.lastIndex(where: { $0.role == "user" }).map { $0 + 1 } ?? 0
         guard start <= messages.count else { return false }
         return messages[start...].contains(where: isBrowserMessage)
@@ -230,7 +230,7 @@ enum BrowserCardStateResolver {
     /// `stop` to confirm it — and a read-only status/tabs/snapshot must NOT resurrect a browser the
     /// agent already tore down. Only opening it (navigate/open, or showing it with canvas.present)
     /// starts a session; only stop/close ends one; everything else leaves the state alone.
-    static func hasLiveBrowser(in messages: [OpenClawChatMessage]) -> Bool {
+    static func hasLiveBrowser(in messages: [RemChatMessage]) -> Bool {
         var live = false
         for m in messages {
             if messageOpensBrowser(m) { live = true }
@@ -242,7 +242,7 @@ enum BrowserCardStateResolver {
 
     /// A tool call that (re)starts a watchable browser: `browser navigate`/`open`, or a
     /// `canvas present` that puts the live view on screen.
-    static func messageOpensBrowser(_ message: OpenClawChatMessage) -> Bool {
+    static func messageOpensBrowser(_ message: RemChatMessage) -> Bool {
         message.content.contains { item in
             guard let action = argAction(item.arguments)?.lowercased() else { return false }
             if item.name?.caseInsensitiveCompare("browser") == .orderedSame {
@@ -261,7 +261,7 @@ enum BrowserCardStateResolver {
     /// upstream `close` targets one tab; if multi-tab streaming ever lands, `close` should end only
     /// when it's the last/active tab. For the shipped single-tab flow, treating both as end is
     /// correct. (`navigate`/`open`/`tabs`/`status`/`snapshot` all keep it alive.)
-    static func messageClosesBrowser(_ message: OpenClawChatMessage) -> Bool {
+    static func messageClosesBrowser(_ message: RemChatMessage) -> Bool {
         message.content.contains { item in
             guard item.name?.caseInsensitiveCompare("browser") == .orderedSame,
                   let action = argAction(item.arguments)?.lowercased() else { return false }
@@ -272,7 +272,7 @@ enum BrowserCardStateResolver {
     /// Any browser/canvas tool call — used both to know a chat TOUCHED the browser and to anchor the
     /// ended card at the browser's place in the transcript. Broader than open/close: a `status` or
     /// `snapshot` counts as "touched" too.
-    static func isBrowserMessage(_ message: OpenClawChatMessage) -> Bool {
+    static func isBrowserMessage(_ message: RemChatMessage) -> Bool {
         message.content.contains { item in
             item.name?.caseInsensitiveCompare("browser") == .orderedSame
                 || item.name?.caseInsensitiveCompare("canvas") == .orderedSame
@@ -281,10 +281,10 @@ enum BrowserCardStateResolver {
 
     /// The `action` argument of a tool call (the browser tool's command — navigate / tabs / close —
     /// lives under `action`).
-    static func argAction(_ args: OpenClawKit.AnyCodable?) -> String? {
+    static func argAction(_ args: RemKit.AnyCodable?) -> String? {
         guard let args else { return nil }
         if let dict = args.value as? [String: Any], let a = dict["action"] as? String { return a }
-        if let dict = args.value as? [String: OpenClawKit.AnyCodable],
+        if let dict = args.value as? [String: RemKit.AnyCodable],
            let a = dict["action"]?.value as? String { return a }
         return nil
     }

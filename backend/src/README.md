@@ -22,38 +22,97 @@ src/
 │   ├── auth.routes.ts          # User auth: login, refresh, delete
 │   ├── gateway.routes.ts       # Gateway credentials, pairing, config, pool ops
 │   ├── deploy.routes.ts        # Deployment orchestration endpoints
+│   ├── conversations.routes.ts # Rem-owned ordinary conversation CRUD + continuation
 │   ├── tasks.routes.ts         # Task/calendar event CRUD + task comments + agent-run
 │   ├── digests.routes.ts       # Proactive cloud digests (list/get/run/delete)
 │   ├── usage.routes.ts         # Usage tracking & quota enforcement
+│   ├── iap.routes.ts           # Apple In-App Purchase endpoints
 │   └── usage.integration.test.ts
 ├── services/
 │   ├── auth.service.ts         # JWT generation, Apple/Google OAuth verification
 │   ├── gateway.service.ts      # Gateway credentials, encryption, wake logic
 │   ├── managed-talk-configuration.service.ts # Fingerprint-aware managed Voice ownership/recovery
 │   ├── gateway-pair.service.ts # WebSocket-based device pairing & config patch
+│   ├── deploy.service.ts       # Fly.io & Railway deploy pipelines (9 phases)
+│   ├── fly.service.ts          # Fly.io Machines API client
+│   ├── pool.service.ts         # Pre-warmed gateway pool management
 │   ├── usage-tracking.service.ts # Token usage recording & cost calculation
-│   ├── task-agent.service.ts    # Cloud task agent (per-task runs) — the OWNER'S gateway, no fallback
+│   ├── task-agent.service.ts    # Task agent — shared Rem runtime, with provenance-gated BYOK compatibility
 │   ├── task-verdict.ts          # The run verdict contract: tool call → envelope → none
 │   ├── gateway-agent.service.ts # Runs a cloud agent turn on the user's gateway via chat.send (Move-2)
 │   ├── gmi.service.ts           # Shared GMI MaaS (OpenAI-compatible) chat client (digest/brief only)
-│   ├── digest.service.ts        # Gather user tasks/events/activity → gateway chat.send → GMI fallback
-│   ├── entitlement/
-│   │   └── entitlement-provider.ts       # Open-core entitlement boundary (billing impl is private)
-│   └── gateway/
-│       └── hosted-provisioning.ts        # Open-core hosted-provisioning boundary (host impl is private)
+│   ├── digest.service.ts        # Gather user tasks/events/activity → Rem shared runtime → local fallback
+│   └── iap/
+│       ├── iap-types.ts                  # Type definitions & error classes
+│       ├── iap-entitlement.service.ts    # Subscription state management
+│       ├── iap-identity.service.ts       # User ↔ subscription mapping
+│       ├── apple-server-client.ts        # Apple App Store Server API client
+│       ├── iap-notifications.service.ts  # Apple notification webhook processing
+│       └── iap-telemetry.service.ts      # PostHog IAP event tracking
 └── scripts/
+    ├── replenish-pool.ts                 # Maintain pre-warmed gateway pool
+    ├── patch-config-all-gateways.ts      # Bulk config patch for all users
     ├── patch-default-model-all-gateways.ts # Update model across all gateways
     ├── repair-broken-pairings.ts         # Fix stale pairing state
+    ├── update-gateway-image-all.ts       # Bump gateway Docker image for all users
+    ├── prune-rem-agent-runs.ts           # Hard-delete expired shared-runtime output
     ├── run-digests.ts                    # Scheduled batch: generate digests for all active users
     └── run-routines.ts                   # Scheduled batch: run every enabled routine that is due now
 ```
 
 ## Key Subsystems
 
+### Agent Runtime Boundary (`runtime/`)
+- Task-agent execution depends on the Rem-owned `AgentRuntime` contract rather than selecting a
+  gateway transport directly. Rem-managed manual task runs, signal relevance, and digest generation
+  execute on the shared implementation; authenticated task-chat continuations and the backend
+  memory extractor do too. Task continuations serialize by task, replay by client dispatch UUID,
+  and commit both visible turns atomically.
+- Migration 134 and `conversations.routes.ts` provide the backend-owned ordinary conversation
+  lifecycle: tenant-scoped create/list/read/rename/delete, bounded paginated history and tool-free continuation on
+  `rem_shared`, exact client-dispatch replay, and deletion that retains only a tombstone while
+  purging transcript and runtime output. Native chat routing and legacy transcript import remain a
+  separate cutover, so this API foundation is not yet a claim that the shipped app bypasses gateways.
+- Manual task runs and their continuations stay on the shared runtime; they never fall back to the
+  transitional BYOK gateway adapter. Migration 129 and `RemCapabilityEffectLedger` now provide the
+  tenant-scoped capability-grant, live run-owner and exact act-policy authorization, idempotent
+  effect claim, redacted token-free audit/replay views, revocation, and uncertain recovery substrate
+  for tool-bearing work. Immutable admitted-run and proposal-run identity survive runtime-row pruning.
+  Expired effects
+  await adapter-specific reconciliation and are never silently re-executed; a leased internal-service
+  reconciler may settle an uncertain row after executor-token loss but cannot authorize dispatch.
+  L0-L2 plan-only routines run on the tenant-scoped shared observe runtime. Their durable
+  `routine_run_occurrences` claim fences concurrent workers, rotates a fresh model attempt after a
+  typed transient Rem-managed runtime failure, and atomically commits the attributed task comment
+  with `last_run_at`. Quota, credential, unknown-payer, and other stable blocks surface once as a
+  needs-attention comment instead of retrying forever. One canonical occurrence key is derived from
+  the prior durable completion rather than mutable cadence/hour/timezone fields, so stale schedule
+  snapshots cannot each publish an outcome. Terminal block code and payer mode persist on the comment;
+  an explicit Run Now carries its own distinct key. A missing-model warning parks that same
+  occurrence in `waiting_model` without stamping `last_run_at`; scheduler retries stay quiet until
+  model selection atomically makes the occurrence reclaimable, preserving one-shot eligibility.
+  Migration 133 also binds new schedules to a task owned by the same tenant; the runner and
+  settlement path independently fail closed on any pre-migration ownership mismatch before even a
+  transitional L3+ wildcard run.
+  L3+ acting routines remain on their existing runtime path until their concrete tool adapters
+  claim and settle the effect fence and pass lifecycle tests.
+- Autonomous sweeps use a `trusted_automation` Rem observe turn in the canonical
+  `rem-task-<UUID>` conversation. The model may only emit `rem_task_report`; a separate act-only
+  run verifies that durable proposal, receives one internal-service automation-policy grant, and
+  commits `tasks.update`, terminal run state, task context, Activity/Undo, replayable transcript,
+  and effect settlement together. It shares the task-chat lock, refreshes/fences the task revision
+  and both conversation tails, and only admits first-party user instructions to unattended policy.
+  The sweep remains off by default until Rem-owned read-only connector/browser parity is available.
+- `OpenClawAgentRuntime` is the transitional production adapter; the shared multi-tenant Rem
+  runtime will replace it at the composition point.
+- The existing PostgreSQL task, conversation, routine, brief, memory, billing, and connector
+  records remain canonical. Do not introduce a parallel runtime-owned product database.
+
 ### Authentication (`auth.service.ts`, `auth.routes.ts`)
 - **Two auth methods**: Apple Sign-In (JWKS verification), Google OAuth (`google-auth-library`)
 - JWT tokens with 7-day expiry, refresh endpoint accepts expired tokens
-- Account deletion cascades: auth_identities → tasks → IAP records → usage_events → Fly app destruction
+- Account deletion cascades: auth identities, conversations, tasks, IAP records, and usage events;
+  transitional Fly app destruction still runs while gateway accounts exist.
 
 ### Gateway Management (`gateway.service.ts`, `gateway.routes.ts`)
 - Gateway token encryption: AES-256-GCM with random IV/tag, stored as `iv:tag:ciphertext` in base64
@@ -76,28 +135,65 @@ src/
 - `user_channels` is intentionally NOT dropped. It is the record of what existed; drop it in a
   later migration only after a run reports `live grants: 0`.
 
-### Hosted deploy / provisioning — operated separately (private)
-
-Provisioning per-user gateways on a cloud host (machine create/wake/teardown, the pre-warmed
-pool, image rollout) is **not part of this open-core seed**. Product code reaches it only through
-two registered interface boundaries, so the seed builds, typechecks, and runs a self-hosted /
-local gateway without any hosted implementation present:
-
-- **`services/gateway/hosted-provisioning.ts`** — the `HostedGatewayProvisioning` interface
-  (lookup / wake / teardown). Default provider throws `HostedProvisioningNotImplementedError`;
-  register a concrete host to enable cloud-managed gateways. See `services/gateway/README.md`.
-- **`services/entitlement/entitlement-provider.ts`** — the `EntitlementProvider` interface. Default
-  returns `{ isActive: true }` for every account, so managed features are un-gated out of the box;
-  register a billing backend to gate them. See `services/entitlement/README.md`.
-
-Managed Voice recovery (`POST /gateway/voice/reconcile`, `managed-talk-configuration.service.ts`)
-gates the backend-owned Talk credential on `getCanonicalEntitlement(...).isActive` and inspects its
-target through `getHostedGatewayProvisioning()`; self-hosted / local gateways short-circuit to
-gateway-owned credential setup before touching either boundary.
-
-Interactive `POST /patch-config` saves require the gateway wrapper to restart and return an
-activated config readback before the backend replies; fresh onboarding initializes browser policy
-while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object.
+### Deployment (`deploy.service.ts`, `fly.service.ts`, `pool.service.ts`)
+- **Fly.io pipeline** (9 phases): creating_project → setting_variables → deploying → waiting_for_healthy → running_onboarding → saving_credentials → complete
+- **Pre-warmed pool**: Maintains 2 ready-to-assign gateways for <30s first deploy. Atomic claim via `FOR UPDATE SKIP LOCKED`. Falls back to full pipeline (~100s) if pool is empty.
+- **Railway pipeline**: GraphQL API for project → service → environment → volume → domain creation
+- Config patching: fresh onboarding initializes browser policy; repair/reconfigure/bulk patches
+  omit the user-owned `browser.ssrfPolicy` object. Interactive `POST /patch-config` saves require
+  the gateway wrapper to restart and return an activated config readback before the backend replies;
+  if setup access is unavailable, the backend rejects before attempting the legacy WebSocket patch.
+  The wrapper stops the gateway before its file mutation, restores the prior bytes after a failed
+  activation when no newer write won. Its one-time browser migration opens only the exact historic
+  Rem-generated hostname postures; user-authored Limited hostname restrictions remain unchanged.
+- Interactive Voice recovery uses `POST /gateway/voice/reconcile`: managed Fly gateways receive
+  the backend-owned canonical Talk configuration only while their canonical entitlement is active,
+  and only after the stored URL host, Fly app/machine metadata, machine `REMCLAW_USER_ID`, and
+  `BACKEND_URL` prove one ownership chain. Reconciliation runs inside the per-user gateway
+  lifecycle lock and reads exact Talk secrets only over the backend's admin-scoped gateway session.
+  The interactive route uses the dedicated owner's fail-fast lane before wake and again before
+  mutation, returning `409` instead of waiting behind a migration/deletion or starving the shared
+  database pool; background reconciliation retains FIFO lifecycle admission. After lock admission,
+  dedicated lifecycle sessions install a 5-second PostgreSQL `statement_timeout`, and Voice routes
+  keep target, canonical-entitlement, and fingerprint queries on that bounded session. This database
+  budget sits inside the shared clients' 600-second recovery deadline rather than extending it.
+  Broad managed redeploy/reconfigure patches omit Talk, then invoke this ownership-aware service
+  after the canonical Fly pointer is durable. `users.managed_talk_credential_fingerprint` records ownership without storing another secret:
+  rotations update only a matching Rem-managed key, expired entitlements remove only that matching
+  key, and a user-owned replacement is preserved while Rem relinquishes the marker. A missing managed
+  key is repaired without resending an existing ElevenLabs provider/voice/model selection. The endpoint
+  returns only non-secret outcomes.
+  Local/manual gateways and unavailable managed provider configuration are explicitly routed to
+  gateway-owned credential setup. Client-entered gateway saves clear stale Fly metadata and cannot
+  label themselves managed without that external ownership proof.
+  Entitlement transactions acquire the same cross-replica advisory fence before their users row
+  lock, set a durable `managed_talk_reconcile_required` bit, and schedule a compensating reconcile
+  after commit. Fresh direct onboarding and pre-warmed assignment consult canonical entitlement
+  before any organization Talk key is written. Assignment has one durable claim per user, transfers
+  Machine ownership env before writing the key, commits only into an empty user pointer, and performs
+  a second in-lock reconcile after the pointer is durable. An ambiguous pre-pointer Talk response
+  triggers compensation only after releasing/reacquiring the lifecycle fence and rereading the
+  claim plus canonical pointer; another replica's durable claim is never resumed. If scrub or later
+  work still fails, the claim remains durable. Account deletion captures unconsumed claims before
+  their owner foreign key clears, and scheduled cleanup destroys orphaned claimed apps before
+  removing metadata. Age-based replenishment cleanup holds that same user fence and atomically
+  retires a stale claim to ownerless durable cleanup state before Fly deletion. That row transition
+  also fences draining pre-lock replicas: their guarded claim consumption fails and rolls back any
+  still-uncommitted user pointer instead of committing a destroyed app.
+  `managed_talk_credential_generation` plus the desired fingerprint make key rotation monotonic
+  across rolling replicas. Operators must increment `ELEVENLABS_API_KEY_GENERATION` with every key
+  change; equal-generation fingerprint disagreement fails closed. Destructive scrub and generation
+  greater than 1 remain pending while `MANAGED_TALK_FENCED_WRITER_ROLLOUT_COMPLETE=false`; enable
+  phase two only after every live writer advertises the lifecycle/generation fence and legacy
+  replicas have drained.
+  Fresh direct Fly provisioning creates durable provisional app ownership under the user lifecycle
+  fence before the remote app request. It reacquires the fence and proves the user/ownership row
+  before installing the organization Talk key, then commits the user pointer, Fly metadata, and
+  canonical ownership in one transaction. Each provisional row is exclusive to one durable
+  deployment attempt ID; concurrent replicas report the existing work as in progress and cannot
+  finalize or compensate another attempt. Account deletion converts both canonical and in-flight
+  ownership to `delete_pending` before deleting the user, and scheduled cleanup retries non-404 Fly
+  failures without losing the app name.
 
 ### Composio Connector Runtime (`composio.routes.ts`, `composio.service.ts`)
 - Settings connection status comes from Composio's full paginated connected-account lifecycle;
@@ -186,6 +282,15 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
 - Task and calendar-event create/update validate `list_id` ownership before writing and persist the
   List assignment in the same SQL statement, so a rejected organization reference cannot leave a
   successful unfiled task behind.
+- `task-update.service.ts` is the canonical transaction-owned task update writer shared by the
+  authenticated PATCH route and Rem's hosted `tasks.update` adapter. The runtime adapter has no
+  device/OpenClaw hop and commits the tenant-scoped task mutation with its audited effect outcome;
+  only authenticated user action resets staleness. A validated shared-runtime `rem_task_report`
+  proposal now reaches this adapter through an act-only execution run and exact one-use approval
+  grant; the model itself never receives acting authority. Interactive and trusted-automation paths
+  share the adapter, which commits task status, terminal run state, agent-owned context, the
+  Undo-bearing activity row, and successful effect settlement together.
+  `runtime:effects:reconcile` resolves expired claims without redispatch.
 - Every user-initiated mutation also clears the brief's staleness counter (migration 116): `PATCH
   /tasks/:id` folds `brief_surface_count = 0, stale_at = NULL` into its own UPDATE, `POST
   /tasks/:id/comments` calls `resetTaskStaleness`, and `POST /tasks/:id/agent-run` folds the reset
@@ -193,7 +298,7 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   `task-staleness.service.ts` for the exhaustive list and the reasoning.
 - **`description` is CO-AUTHORED** (migration 120, `task-description.ts` +
   `task-description.service.ts`). It is the "what I know NOW" surface from
-  the founder's product model, as opposed to `task_comments` ("what happened each run") and
+  `docs/product/DECISIONS.md`, as opposed to `task_comments` ("what happened each run") and
   chat ("the conversation"). One column holds both authors, separated by an agent-managed
   block delimiter, and each side may write only its own half:
   `PATCH /tasks/:id` with `description` replaces the USER's text and preserves Rem's block;
@@ -203,19 +308,27 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   design exists to prevent. `formatTask` emits `description` (the whole column),
   `description_user`, and `description_agent`, so no client re-implements the delimiter parser.
 - Both run paths WRITE the description: `POST /tasks/:id/agent-run` and the autonomous
-  `orchestrator-sweep` (which folds the write into the same transaction as the status apply
-  and the comment). The run returns its state on a `task_context:` marker line, and both
+  `orchestrator-sweep` (whose audited adapter folds the write into the same transaction as status,
+  comment, and effect settlement). The run returns its state through `rem_task_report`, and both
   prompts read the description back, which is what stops a run starting from zero.
 
 ### Task runs: one runtime, one verdict (`task-agent.service.ts`, `task-verdict.ts`)
-- **Every task run happens on the OWNER'S gateway.** `POST /tasks/:id/agent-run`, routines
-  (`routine-runner.service.ts`) and the autonomous `orchestrator-sweep` all pass `userId` into
-  `runAgentOnTask`, which runs one `chat.send` turn on that user's gateway. There is **no
-  fallback runtime**. The retired AgentBox/GMI path (`GMI_AGENTBOX_URL`, `GMI_API_KEY`) spent one
-  shared org key for every user: it rate-limited, and it billed the operator for work that metered
-  to nobody. A user with no gateway now gets an actionable comment and `run_status='blocked'`
-  instead of a silent charge to someone else. `gmi.service.ts` now survives for exactly ONE caller:
-  the brief's connector-enrichment producer (see below).
+- **Rem-managed manual task runs use Rem's shared runtime, without a personal gateway.**
+  `POST /tasks/:id/agent-run` passes authenticated tenant authority plus a stable per-dispatch
+  idempotency key into one `rem_shared` observe turn. The runtime offers only the side-effect-free
+  `rem_task_report` function, validates and durably replays its arguments, and cannot itself execute
+  task writes. Tool-only output that does not validate becomes a charged terminal error, never a
+  durable empty success. The authenticated `Run Now` action approves the exact normalized report:
+  a deterministic act-only executor first verifies the successful tenant/session observe run and
+  its exact final stored call, then admits only `tasks.update`, replays one tenant-scoped one-use
+  grant on retry, and delegates the mutation to the audited adapter. If that effect is blocked,
+  failed, or pending, the route leaves the status unapplied and records a reviewable proposal rather
+  than bypassing the ledger. Transitional envelope/BYOK verdicts retain their route-owned direct
+  apply path but receive no Rem tool authority. The autonomous `orchestrator-sweep` uses the same
+  proposal verifier and adapter under trusted automation policy; L3+ scheduled routines remain a
+  separate transitional gateway seam. Proven BYOK accounts retain
+  a narrow manual-run fallback to their credential-owning gateway until Rem owns encrypted BYOK
+  credential transport; unknown payer state never triggers that fallback.
 - **A blocked run says WHY, in a machine field.** `AgentRunResult.runBlock` is `{ code, mode }` from
   `run-block.ts`, persisted on `tasks` AND `task_comments` (migration 121) and returned live. The
   backend never ships the sentence: the client picks copy and call-to-action from the pair, because
@@ -225,13 +338,15 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   produces prose (what happened — the `task_comments` row the user reads) and a `TaskVerdict`
   (what it DECIDED — the status the route applies, the `previous_status` it stamps for Undo, the
   terminal `run_status`). Two carriers, one normalizer, strict precedence:
-  1. `tool_call` — the agent invokes a `rem_task_report` tool and the gateway streams us its
-     schema-validated arguments as an `agent`/`stream:"tool"` event. **Not live yet**: no such tool
-     exists on the deployed fleet, and adding one is a fleet operation (see below). The reader
-     ships so landing the tool is a config change, not a code change.
+  1. `tool_call` — the shared runtime's primary carrier. `rem_task_report` is registered as
+     structured output, not an acting capability; its normalized call is stored with the run.
   2. `envelope` — one versioned machine line, `rem.task_verdict.v1 {json}`, stripped from the
-     prose before it is persisted. This is what carries the verdict today.
+     prose before it is persisted. Retained while provider/model tool support is monitored and for
+     transitional runtimes.
   3. `none` — no verdict. The comment lands, **no status is applied**, `run_status='review'`.
+- **Deletion removes the private runtime copy.** `DELETE /tasks/:id` takes the same advisory lock as
+  task chat/manual runs, then purges every tenant-scoped `rem-task-<id>` runtime row in the task and
+  tombstone transaction. A concurrent turn cannot recreate task context after deletion commits.
 - **Fail-closed, and countable.** Every reader returns `undefined` rather than guessing, so the
   failure mode is "Rem proposed nothing", never "Rem moved your task to the wrong status".
   `AgentRunResult.verdictSource` records which carrier won, so a verdict that stops arriving is
@@ -239,25 +354,26 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
 - **No prose regex.** `parseProposedStatusFromText` is deleted. It matched `status:` followed by a
   keyword anywhere in free prose — so a sentence merely discussing a status was a status decision,
   including on the autonomous sweep, which then applied it.
-- **`opts.model` is ignored** (#808). `ChatSendParamsSchema` has no `model` field, so a turn uses
-  the model that user's gateway is configured with.
+- **`opts.model` is honored** by the Rem runtime and included in the durable request fingerprint.
 - Backend gateway sockets advertise `caps: ['tool-events']` (`gateway-pair.service.ts`), mirroring
   `GatewayClient.swift:49`. Without it `chat.send` never registers the connection as a tool-event
   recipient and no tool call is delivered — see that constant's docblock for the upstream citation.
 
 ### Proactive Cloud Digests (`digests.routes.ts`, `digest.service.ts`, `scripts/run-digests.ts`)
-- Twice-daily briefs the GMI cloud agent writes **unprompted**: `morning_brief` (today's events + open/overdue tasks) and `evening_recap` (completed today, new comments, what's still open).
-- `digest.service.ts` gathers from the backend's own tables (tasks, calendar events, task_comments), then asks the user's **gateway** to write the brief via `chat.send` (`gateway-agent.service.ts`, Move-2). **There is no second runtime.** The GMI-MaaS fallback was removed: a user whose gateway is their own ran on their key on the happy path and on the operator's org key on any wake failure, which is the per-feature hybrid `run-block.ts` exists to forbid.
-- **Never hard-fails**: nothing to report → stored as `source='empty'` with no model call; the gateway could not take the turn → deterministic local summary (`source='fallback'`).
+- Twice-daily briefs Rem writes **unprompted**: `morning_brief` (today's events + open/overdue tasks) and `evening_recap` (completed today, new comments, what's still open).
+- `digest.service.ts` gathers from backend-owned tables, then asks the Rem shared tool-free runtime to write the brief. It does not discover or wake a personal gateway.
+- **Never hard-fails**: nothing to report → stored as `source='empty'` with no model call; runtime unavailable → deterministic local summary (`source='fallback'`).
 - Scheduled by an external cron hitting `npm run digests:run` (`DIGEST_KIND=morning_brief|evening_recap`); on-demand via `POST /digests/run`. See [docs/agentbox/DIGESTS.md](../../docs/agentbox/DIGESTS.md).
 
 ### Agenda Daily Brief Conversation (`brief.routes.ts`, `brief-authoring.service.ts`)
 - `BRIEF_AI_AUTHORING_ENABLED` controls future scheduled authoring and connector collection; it
-  does not revoke a current-day artifact that was already durably delivered. `GET /brief` always
-  performs the exact artifact/revision/delivery read and advertises `brief_session_key` only for
-  that proven delivery. Turning check-in triggers off stops future runs without hiding today's brief.
-- Agenda's optional AI prose is authored by the user's own gateway in fresh
-  `rem-brief-author-*` contexts. An expiring authoring lease makes one canonical artifact per
+  does not revoke a current-day artifact already authored. `GET /brief` returns the exact canonical
+  artifact independently of gateway delivery, marks it `is_authored`, and advertises
+  `brief_session_key` only for proven conversation delivery. Turning check-in triggers off stops
+  future runs without hiding today's brief.
+- Agenda's optional AI prose for Rem-managed users is authored by the shared Rem runtime in fresh
+  `rem-brief-author-*` contexts. A durable semantic attempt identity survives lease recovery and
+  prevents duplicate model work; an expiring authoring lease makes one canonical artifact per
   user/local-day/slot, so overlapping cron/check-in workers cannot produce different card/chat prose.
 - Rollout is backend-first: `GET /api/v1/brief` negotiates legacy `rem-today-*` unless the client
   sends `X-Rem-Conversation-Continuity: durable-orchestrator-v1`, but advertises that key only after
@@ -337,11 +453,17 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   that wants a toast, an undo, or nothing is a product call; recorded here so it is not rediscovered
   as a bug.
 - **The judge is shown the next 14 days of the user's schedule, from its own query.** Reusing
-  `loadTaskContext` would not have worked, and the reason is worth knowing: it has no `type` filter,
-  so synced calendar events (`tasks` rows of `type = 'calendar_event'`) are ALREADY in the relevance
-  prompt — but it orders `start_date ASC` and nobody ever completes a calendar event, so the forty
-  oldest dated rows are ancient events and next week never appears. `loadScheduleContext` is the
-  same never-throws discipline over the opposite window.
+  `loadTaskContext` would not have worked, and the reason is worth knowing: it orders
+  `start_date ASC` and nobody ever completes a calendar event, so the forty oldest dated rows would
+  be ancient events and next week would never appear. `loadScheduleContext` is the same never-throws
+  discipline over the opposite window.
+- **`loadTaskContext` filters to `type = 'task'`, so calendar events are NOT aggregation parents.**
+  Synced calendar events (`tasks` rows of `type = 'calendar_event'`, migration 024) sit as `pending`
+  forever ("nobody closes a birthday"). Without the filter they surfaced as `[P#]` parent
+  candidates, and a `complete` echo-matched to one stored `decision='complete'` (suppressing the
+  signal) while the write no-opped — the writers in `task-description.service.ts` refuse any
+  `type <> 'task'` parent. The candidate list the model sees is now exactly the set those writers
+  will accept.
 - **No structured time survives ingestion today, so there is nothing for a model guess to lose to.**
   `GmailBriefRawItem` is six fields (`composio.service.ts`); an ICS attachment or a `DTSTART` never
   enters the process, and `channel_signals` has no column for one. A time named IN a message reaches
@@ -379,9 +501,9 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   `GMAIL_FETCH_EMAILS` `20260721_00`. It retains only sender,
   subject/preview, provider IDs and timestamp in-memory, and persists only backend producer,
   capture time, source manifest, stable IDs and fingerprints with the artifact. Connector-fed
-  prose uses the backend's plain GMI chat-completions seam, which declares no tools; raw email data
-  never enters gateway `chat.send` or its authoring JSONL. Only final prose is injected. If that
-  tool-less model fails, task-bearing briefs fall back to a task-only gateway prompt and
+  prose uses the Rem-owned shared runtime in observe-only mode with no allowed tools; raw email data
+  never enters gateway `chat.send` or its authoring JSONL. Only final prose is injected. If enriched
+  authoring fails, managed task-bearing briefs make a distinct task-only shared-runtime dispatch;
   connector-only briefs fail closed. Collection failures remain unavailable rather than empty.
 
 ### Daily Brief artifacts (`brief.routes.ts`, `brief.service.ts`, `brief-authoring.service.ts`)
@@ -420,17 +542,20 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   UPDATE), a user comment, or an `agent-run` dispatch — while autonomous `orchestrator-sweep` writes
   deliberately do not, so Rem cannot revive its own nagging. Nothing is ever deleted or
   auto-completed. `task-staleness.db.test.ts` drives the real authoring path against PGlite.
-- When AI authoring is enabled, every eligible non-empty time slot owns one canonical persisted artifact and uses a fresh gateway authoring turn. Empty backend task snapshots remain deterministic Agenda state only: they do not append synthetic assistant prose to Today, because gateway/connector-owned work can make an injected “all clear” contradict the user's actual AI-authored update.
+- When AI authoring is enabled, every eligible non-empty time slot owns one canonical persisted artifact. Rem-managed users author through the shared tool-free runtime with a durable semantic attempt identity; BYOK task-only remains on the transitional gateway until credential transport exists. Empty backend task snapshots remain deterministic Agenda state only: they do not append synthetic assistant prose to Today, because connector-owned work can make an injected “all clear” contradict the user's actual update.
 - Historical deterministic artifacts remain identifiable as `fallback`, but new empty snapshots do not author or deliver them. A later real gateway artifact may supersede a historical fallback after its artifact-row delivery fence expires. Every successful replacement rotates an immutable revision carried through delivery claim, preparation, reconciliation, and completion so a stale worker cannot inject or mark a newer artifact delivered.
-- The same exact artifact is delivered to the durable `rem-orchestrator` transcript and the legacy per-day transcript during rollout. `/brief` keeps buckets/counts live but takes prose + session identity from the canonical `daily_briefs` pointer only when both it and its exact current artifact revision are `source=gateway` and proven delivered to the negotiated transcript. Legacy `source=fallback` artifacts are never prose authority.
+- The same exact artifact is offered to the durable `rem-orchestrator` transcript and the legacy per-day transcript during rollout. `/brief` keeps buckets/counts live and takes prose from the canonical `daily_briefs` pointer immediately; `is_authored` authorizes the card/read-aloud surface independently, while `brief_session_key` remains withheld until the exact revision is proven delivered to the negotiated transcript. Legacy `source=fallback` artifacts are never prose authority.
 - A delivered artifact's Agenda summary is normalized or derived from that same canonical markdown.
   If no useful lead can be derived, `/brief` clears the summary instead of retaining
   `gatherBrief`'s deterministic fallback beside canonical markdown/session authority.
 - `npm run brief:repair -- --user-id UUID --local-day YYYY-MM-DD --digest SHA256 [--message-id ID]` is a staging-only, dry-run-by-default recovery seam. It requires both the immutable Railway staging environment ID and a pinned fingerprint read from the connected Postgres cluster before commit. It reads history with the target staging user's already-stored gateway mapping and requires an exact, unique transcript identity; even dry-run verification may wake a sleeping Fly gateway. `--commit` refuses active authoring/delivery leases, then invalidates only that user/day's historical fallback rows and adopts the verified message inside one transaction. It never infers first/latest prose or prints prose/credentials.
 - Enabled Daily Brief triggers use an artifact-first notification lifecycle: a check-in authors (or
-  recovers) its exact local-day/slot artifact, proves the current revision is delivered to
-  `rem-orchestrator`, then sends one collapsible APNs alert and stamps the trigger. Authoring or
-  transcript-delivery failure sends no notification and leaves the trigger retryable **within a
+  recovers) its exact local-day/slot artifact, revalidates that canonical pointer under the
+  notification fence, then sends one collapsible APNs alert and stamps the trigger. During the
+  mixed-client rollout, APNs remains gated on exact transcript delivery because older clients need
+  `brief_session_key`; updated clients may still fetch and read canonical gateway-free artifacts
+  directly from `/brief`. Version-capable artifact-only push fanout is a separate migration. Authoring
+  failure sends no notification and leaves the trigger retryable **within a
   bounded per-local-day attempt budget** (`CHECKIN_MAX_DELIVERY_ATTEMPTS`, currently 5). Each
   attempt increments `user_checkins.attempt_count`; the counter is bucketed by
   `attempt_day` (the user's LOCAL day, so an outage spanning midnight does not spend the new
@@ -478,7 +603,7 @@ while repair/reconfigure patches omit the user-owned `browser.ssrfPolicy` object
   unregister arriving after a current-client transfer cannot remove that transferred row.
 
 ### Routines (`routine-schedule.service.ts`, `routine-runner.service.ts`, `scripts/run-routines.ts`)
-- A routine is an existing task that does work on a cadence (`routine_schedules`, migration 017). CRUD lives in `routine-schedule.service.ts`; the per-run execution + governance gate (model-gate → deny-list → shared agent → attributed task_comment → RunReport → `stampLastRun`) lives in `routine-runner.service.ts`.
+- A routine is an existing, same-tenant task that does work on a cadence (`routine_schedules`, migrations 017 and 133). CRUD lives in `routine-schedule.service.ts`; the per-run execution + governance gate lives in `routine-runner.service.ts`. `routine-policy-lock.service.ts` uses its own bounded database pool to serialize the authoritative enabled/autonomy/prompt/model read and complete dispatch with update, pause, and delete, so those mutations have a defined order relative to an L3 acting turn without starving ordinary queries. Every L0-L2 outcome plus scheduled model/policy terminal outcomes claims a durable occurrence before any model call or comment; successful plans and denied outcomes settle the comment plus `last_run_at` in one statement. Model-selection warnings instead park the occurrence without stamping a run, remain deduplicated while configuration is unchanged, and become reclaimable when a model is selected so one-shot routines are not consumed. Public JWT Run Now carries an explicit manual identity and may intentionally run a paused routine; the retained shared-secret gateway webhook remains scheduled/fail-closed because legacy cron jobs can still invoke it. L3+ acting runs retain their transitional writer until concrete adapters exist.
 - **Backend-scheduled** (NOT gateway cron): an external Railway cron runs `npm run routines:run` every 15 minutes; `scripts/run-routines.ts` selects routines due now (`isDailyRoutineDue` + cadence, per-user timezone) and calls `runRoutine` in-process. The `routine_schedules` row is the sole source of truth; CRUD does no gateway sync. (Replaces the deleted `routine-cron.service.ts` gateway-cron trigger.)
 - Wake-on-demand: if a run's agent issues a device command, the user's Fly gateway auto-wakes via `auto_start_machines` on the request — no explicit wake step in the scheduler.
 - `internal-routines.routes.ts` (`POST /internal/routines/:id/run`, shared-secret auth) is retained as a manual/programmatic trigger seam, but is **no longer** the scheduled path.
@@ -537,27 +662,21 @@ Check these first — all three are intended.
 - **BYOK is a per-user MODE, not a per-feature choice.** A user is on their own model provider or on
   Rem-managed, for everything. Any path that picks a provider credential independently of that mode
   is a bug — including a "fallback" that only triggers on a transient.
-- `resolveModelRuntimeMode(userId)` is the single seam. It derives the mode from whether *Rem*
-  provisioned the credentials that runtime authenticates with: `users.hosting_provider = 'fly'` →
-  `rem_managed` (the org `ANTHROPIC_API_KEY` and `GMI_API_KEY` are injected at deploy time);
-  `railway`/`local`/`manual` → `byok`; no gateway at all → `unknown` (the column DEFAULTs to
-  `'railway'`, so it means nothing without one).
-- **Sound in one direction only.** `byok` is proven; `rem_managed` is not. A managed-Fly user who
-  brought their own key would be invisible here — safe today only because bringing a key to a
-  managed gateway is unimplemented (`SharedBYOKSettingsView` writes the device Keychain and is
-  deliberately unlinked; see `docs/architecture/2026-08-09-cloud-gateway-byok-contract.md`). When
-  Phase 1 of that contract ships, the credential-install mutation must record the mode and this
-  resolver must read that record instead of `hosting_provider`.
+- `resolveModelRuntimeMode(userId)` is the single seam. It reads durable payer ownership from
+  `users.model_runtime_mode` (migration 126), independent of gateway URL, hosting provider, or
+  deployment state. Existing and new accounts default to `rem_managed`; missing, invalid, or
+  unavailable state resolves to `unknown`.
+- No current product mutation stores `byok`. A future BYOK migration must make a credential
+  available to the assigned Rem runtime and change `model_runtime_mode` in the same lifecycle;
+  device Keychain presence alone is not backend runtime authority.
 - `mayChargeRemManagedKey(mode)` is the gate, and it **fails closed on `unknown`**: a failed mode
   lookup is not permission to bill the operator.
-- **The only remaining backend call on the org `GMI_API_KEY`** is the brief's connector-enrichment
-  producer (`brief-authoring.service.ts`). It is a PRIMARY, not a fallback: raw connector text must
-  never enter the tool-capable, persisted gateway turn, so it cannot be rerouted the way task runs
-  were. It is gated on `mayChargeRemManagedKey` instead. What a blocked user loses depends on the
-  day: one with tasks still authors from task data (enrichment lost, brief kept); a
-  **connector-only day produces no brief at all** (`reason = 'connector_model_not_owned'`), because
-  connector text may not fall through to the tool-capable gateway. That is the deliberate trade.
-  **No user takes this branch today** — see the mode note above.
+- `runAgentTurnOnSharedRuntime` enforces that gate centrally before loading the provider runtime,
+  so digest, memory, relevance, and future callers cannot bypass payer ownership by omission.
+- Daily Brief authoring for Rem-managed accounts runs through the observe-only shared runtime with
+  no tools. Connector text never enters legacy gateway `chat.send`. A future BYOK account keeps
+  task-only authoring on its own gateway until Rem owns a consented credential transport; a
+  connector-only BYOK day fails closed with `connector_model_not_owned`.
 
 ## Patterns & Conventions
 
@@ -591,7 +710,10 @@ All routes mounted at `/api/v1`:
 | GET | `/deploy/status` | JWT | Check deploy progress |
 | GET/POST/PATCH/DELETE | `/tasks/*` | JWT | Task CRUD |
 | GET/POST | `/tasks/:id/comments` | JWT | Task comment thread (user + cloud_agent + local_runtime) |
-| POST | `/tasks/:id/agent-run` | JWT | Run the GMI AgentBox cloud agent on a task |
+| POST | `/tasks/:id/agent-run` | JWT | Run Rem's task agent and persist its verdict/transcript |
+| GET/POST | `/conversations` | JWT | List or create Rem-owned ordinary conversations |
+| GET/PATCH/DELETE | `/conversations/:id` | JWT | Read, rename, or delete one owned conversation |
+| POST | `/conversations/:id/chat` | JWT | Continue a conversation with exact dispatch replay |
 | GET | `/digests` | JWT | List the user's proactive digests |
 | GET | `/digests/:id` | JWT | Fetch a single digest |
 | POST | `/digests/run` | JWT | Generate a digest now (`{ kind? }`) |

@@ -2,30 +2,53 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const clientMock = vi.hoisted(() => ({
+  query: vi.fn(),
+  release: vi.fn(),
+}));
 const poolMock = vi.hoisted(() => ({
   query: vi.fn(),
+  connect: vi.fn(),
+}));
+const poolClientMock = vi.hoisted(() => ({
+  query: vi.fn(),
+  release: vi.fn(),
 }));
 
-// The run's ONLY network boundary is now the user's gateway. Everything from the HTTP
+// The model completion is behind Rem's runtime boundary. Everything from the HTTP
 // request down to the SQL — including the verdict read — is the real code.
-const runAgentTurnOnGatewayMock = vi.hoisted(() => vi.fn());
-vi.mock('../services/gateway-agent.service.js', () => ({
-  runAgentTurnOnGateway: runAgentTurnOnGatewayMock,
-  injectAssistantMessageOnGateway: vi.fn(),
+const runAgentTurnOnSharedRuntimeMock = vi.hoisted(() => vi.fn());
+const runAgentTurnMock = vi.hoisted(() => vi.fn());
+const executeTaskStatusProposalMock = vi.hoisted(() => vi.fn());
+vi.mock('../runtime/agent-runtime.service.js', () => ({
+  runAgentTurnOnSharedRuntime: runAgentTurnOnSharedRuntimeMock,
+  runAgentTurn: runAgentTurnMock,
+}));
+vi.mock('../runtime/rem-task-tool-execution.js', () => ({
+  executeInteractiveTaskStatusProposal: executeTaskStatusProposalMock,
+  executeTrustedAutomationTaskStatusProposal: vi.fn(),
 }));
 
-/** A successful gateway turn returning `text` verbatim. */
-function gatewayReplies(text: string, toolCalls: unknown[] = []) {
-  runAgentTurnOnGatewayMock.mockResolvedValueOnce({
+/** A successful Rem-runtime turn returning `text` verbatim. */
+function runtimeReplies(text: string, toolCalls: unknown[] = []) {
+  runAgentTurnOnSharedRuntimeMock.mockResolvedValueOnce({
     ok: true,
     text,
-    runId: 'gw-run-1',
+    runId: 'rem-run-1',
     sessionKey: 'rem-task-x',
     toolCalls,
+    provenance: {
+      runtimeId: 'rem_shared',
+      persistenceKind: 'rem_runtime',
+      billingMode: 'rem_managed',
+    },
   });
 }
 
-vi.mock('../db/pool.js', () => ({ pool: poolMock }));
+vi.mock('../db/pool.js', () => ({
+  pool: poolMock,
+  taskConversationPool: { connect: async () => clientMock },
+}));
 
 // Only the mode LOOKUP is stubbed. It would otherwise issue its own SELECT through the pool
 // mock and shift every positional query assertion in this file; the lookup's real behaviour is
@@ -62,6 +85,7 @@ const taskRow = {
 };
 
 const tasksRoutes = (await import('./tasks.routes.js')).default;
+const { TASK_VERDICT_TOOL_NAME } = await import('../services/task-verdict.js');
 
 function testApp() {
   const app = express();
@@ -73,10 +97,39 @@ function testApp() {
 describe('task comments + agent-run routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: the user has no gateway, so the run cannot proceed and lands the errored
-    // result. Tests that need a real turn call `gatewayReplies(...)` first.
-    runAgentTurnOnGatewayMock.mockResolvedValue({ ok: false, reason: 'no_gateway' });
+    poolClientMock.query.mockImplementation(async (sql: string, values?: unknown[]) => {
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)\s*$/i.test(String(sql))) return { rows: [] };
+      return poolMock.query(sql, values);
+    });
+    poolMock.connect.mockResolvedValue(poolClientMock);
+    clientMock.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('pg_try_advisory_xact_lock')
+        ? { rows: [{ acquired: true }] }
+        : { rows: [] });
+    // Default: runtime admission fails, so the route persists the degraded result.
+    // Tests that need a real turn call `runtimeReplies(...)` first.
+    runAgentTurnOnSharedRuntimeMock.mockResolvedValue({
+      ok: false,
+      reason: 'unavailable',
+      provenance: {
+        runtimeId: 'rem_shared',
+        persistenceKind: 'rem_runtime',
+        billingMode: 'rem_managed',
+      },
+    });
+    runAgentTurnMock.mockResolvedValue({
+      ok: false,
+      reason: 'unavailable',
+      provenance: {
+        runtimeId: 'openclaw_gateway',
+        persistenceKind: 'gateway',
+        billingMode: 'byok',
+      },
+    });
     resolveModeMock.mockResolvedValue('rem_managed');
+    executeTaskStatusProposalMock.mockResolvedValue({
+      kind: 'not_applied', reason: 'execution_unavailable',
+    });
   });
 
   it('posts a user comment with author_kind=user and author_label=You', async () => {
@@ -123,11 +176,14 @@ describe('task comments + agent-run routes', () => {
     );
     expect(reset).toBeDefined();
     expect(reset![1]).toEqual([TASK_ID, USER_ID]);
+    const taskFence = poolMock.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && /SELECT id FROM tasks/.test(sql) && /FOR UPDATE/.test(sql),
+    );
+    expect(taskFence).toBeDefined();
+    expect(poolClientMock.query).toHaveBeenCalledWith('COMMIT');
   });
 
   it('rejects an empty comment body with 400', async () => {
-    poolMock.query.mockResolvedValueOnce({ rows: [taskRow] });
-
     const response = await request(testApp())
       .post(`/api/v1/tasks/${TASK_ID}/comments`)
       .send({ body: '   ' });
@@ -136,8 +192,6 @@ describe('task comments + agent-run routes', () => {
   });
 
   it('rejects an invalid proposed_status with 400', async () => {
-    poolMock.query.mockResolvedValueOnce({ rows: [taskRow] });
-
     const response = await request(testApp())
       .post(`/api/v1/tasks/${TASK_ID}/comments`)
       .send({ body: 'ok', proposed_status: 'bogus' });
@@ -220,7 +274,7 @@ describe('task comments + agent-run routes', () => {
             author_label: 'Rem Cloud',
             body: values[2],
             proposed_status: values[3],
-            runtime: 'gateway',
+            runtime: values[5],
             created_at: '2026-06-26T17:10:00.000Z',
           },
         ],
@@ -228,9 +282,7 @@ describe('task comments + agent-run routes', () => {
       .mockResolvedValueOnce({ rows: [] }); // INSERT task_chat_messages transcript
   }
 
-  it('agent-run lands an actionable comment — and no status change — with no gateway', async () => {
-    // The old behaviour here was to fall back to the operator's shared GMI key. There is
-    // no fallback now: the run reports honestly and touches nothing.
+  it('agent-run lands an actionable comment when Rem-runtime admission fails', async () => {
     mockAgentRun({ run_status: 'blocked', run_id: 'run-1' });
 
     const response = await request(testApp())
@@ -241,17 +293,18 @@ describe('task comments + agent-run routes', () => {
     expect(response.body).toMatchObject({
       author_kind: 'cloud_agent',
       author_label: 'Rem Cloud',
-      runtime: 'gateway',
+      runtime: 'rem_runtime',
       proposed_status: null,
     });
-    expect(response.body.body).toContain('needs your own Rem gateway');
+    expect(response.body.body).toContain('not ready to run this task');
 
     // Confirm the insert is attributed to the runtime that actually ran.
     const insertCall = poolMock.query.mock.calls[4][0] as string;
     expect(insertCall).toContain("'cloud_agent'");
     expect(insertCall).toContain("'Rem Cloud'");
-    expect(insertCall).toContain("'gateway'");
+    expect((poolMock.query.mock.calls[4][1] as any[])[5]).toBe('rem_runtime');
     expect(insertCall).not.toContain("'agentbox'");
+    expect(runAgentTurnMock).not.toHaveBeenCalled();
   });
 
   it('agent-run PERSISTS the structured block reason on the task and on the comment', async () => {
@@ -259,7 +312,15 @@ describe('task comments + agent-run routes', () => {
     // the fact, so a reason that lives only in the HTTP response cannot be shown there. Both
     // rows carry `{ code, mode }` (migration 121) — the task for "how did the last run end",
     // the comment for "how did THAT run end" three runs later.
-    resolveModeMock.mockResolvedValue('byok');
+    runAgentTurnOnSharedRuntimeMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unavailable',
+      provenance: {
+        runtimeId: 'rem_shared',
+        persistenceKind: 'rem_runtime',
+        billingMode: 'byok',
+      },
+    });
     mockAgentRun({ run_status: 'blocked', run_id: 'run-1' });
 
     await request(testApp()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
@@ -272,11 +333,11 @@ describe('task comments + agent-run routes', () => {
     expect((terminal[1] as any[])[1]).toBe('runtime_unavailable');
     expect((terminal[1] as any[])[2]).toBe('byok');
 
-    // Query #5 is the comment INSERT: [taskId, userId, body, proposed, previous, runId, code, mode].
+    // Query #5 is the comment INSERT: [taskId, userId, body, proposed, previous, runtime, runId, code, mode].
     const insert = poolMock.query.mock.calls[4];
     expect(String(insert[0])).toContain('run_block_code, run_block_mode');
-    expect((insert[1] as any[])[6]).toBe('runtime_unavailable');
-    expect((insert[1] as any[])[7]).toBe('byok');
+    expect((insert[1] as any[])[7]).toBe('runtime_unavailable');
+    expect((insert[1] as any[])[8]).toBe('byok');
   });
 
   it('agent-run CLEARS a previous block when the next run succeeds', async () => {
@@ -284,7 +345,7 @@ describe('task comments + agent-run routes', () => {
     // that failed yesterday and ran fine today must stop advertising "your runtime is
     // unavailable", or the user is told to fix something they already fixed.
     mockAgentRun({ run_status: 'review', run_id: 'run-2' });
-    gatewayReplies('Looked into it.');
+    runtimeReplies('Looked into it.');
 
     await request(testApp()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
 
@@ -292,10 +353,9 @@ describe('task comments + agent-run routes', () => {
     expect((terminal[1] as any[])[1]).toBeNull();
     expect((terminal[1] as any[])[2]).toBeNull();
     const insert = poolMock.query.mock.calls[4];
-    expect((insert[1] as any[])[6]).toBeNull();
     expect((insert[1] as any[])[7]).toBeNull();
-    // The mode is not even looked up on a successful run — it would tell the client nothing
-    // actionable and would cost a query on the hot path.
+    expect((insert[1] as any[])[8]).toBeNull();
+    // Provenance belongs to every runtime result; the route does not re-derive it.
     expect(resolveModeMock).not.toHaveBeenCalled();
   });
 
@@ -322,24 +382,60 @@ describe('task comments + agent-run routes', () => {
     // And the comment row echoes the same pair, so an activity list needs no join. Asserted on
     // the value the INSERT actually bound, not merely on key presence — `formatComment` emits
     // `?? null` unconditionally, so `toHaveProperty` here could never fail.
-    const insertedCode = (poolMock.query.mock.calls[4][1] as any[])[6];
+    const insertedCode = (poolMock.query.mock.calls[4][1] as any[])[7];
     expect(insertedCode).toBe('runtime_unavailable');
   });
 
-  it('agent-run dispatches the turn to the OWNER\'S gateway under the task session key', async () => {
-    // The billing fix, asserted where it is decided: the run names this user, so the tokens
-    // it spends meter to them and not to a shared org key.
+  it('agent-run dispatches a reporting-only Rem-runtime turn under the task session key', async () => {
     mockAgentRun({ run_status: 'review', run_id: 'run-1' });
-    gatewayReplies('Looked into it.');
+    runtimeReplies('Looked into it.');
 
     await request(testApp()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
 
-    expect(runAgentTurnOnGatewayMock).toHaveBeenCalledWith(
+    expect(runAgentTurnOnSharedRuntimeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: USER_ID,
+        principal: { userId: USER_ID, authority: 'authenticated_user' },
         sessionKey: `rem-task-${TASK_ID.toLowerCase()}`,
+        toolPolicy: {
+          mode: 'observe',
+          allowedTools: [TASK_VERDICT_TOOL_NAME],
+          approval: 'none',
+        },
       }),
     );
+    expect(String(clientMock.query.mock.calls[1][0])).toContain('pg_try_advisory_xact_lock');
+    expect(String(clientMock.query.mock.calls.at(-1)?.[0])).toBe('ROLLBACK');
+    expect(clientMock.release).toHaveBeenCalledOnce();
+  });
+
+  it('agent-run preserves proven BYOK fallback in a separate legacy recovery session', async () => {
+    runAgentTurnOnSharedRuntimeMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unavailable',
+      provenance: {
+        runtimeId: 'rem_shared', persistenceKind: 'rem_runtime', billingMode: 'byok',
+      },
+    });
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: true,
+      text: 'Handled with your connected model.',
+      runId: 'legacy-run',
+      sessionKey: `openclaw-manual-task-${TASK_ID}`,
+      toolCalls: [],
+      provenance: {
+        runtimeId: 'openclaw_gateway', persistenceKind: 'gateway', billingMode: 'byok',
+      },
+    });
+    mockAgentRun({ run_status: 'review', run_id: 'run-legacy' });
+
+    await request(testApp()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
+
+    expect(runAgentTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKey: `openclaw-manual-task-${TASK_ID}`,
+    }));
+    const commentValues = poolMock.query.mock.calls[4][1] as any[];
+    expect(commentValues[5]).toBe('gateway');
+    expect(commentValues[6]).toBe(`openclaw-manual-task-${TASK_ID}`);
   });
 
   it('agent-run stamps run_status=running with a generated run_id BEFORE dispatch', async () => {
@@ -396,7 +492,7 @@ describe('task comments + agent-run routes', () => {
     expect(transcriptValues[3]).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
-    expect(transcriptValues[4]).toContain('needs your own Rem gateway'); // reply = errored body
+    expect(transcriptValues[4]).toContain('not ready to run this task'); // reply = errored body
   });
 
   it('agent-run synthesizes the ask from the task title when no instruction is given', async () => {
@@ -451,10 +547,162 @@ describe('task comments + agent-run routes', () => {
     expect(response.status).toBe(404);
   });
 
+  it('POST /tasks/:id/chat continues on the Rem runtime and commits one durable turn pair', async () => {
+    const dispatchID = '33333333-3333-4333-8333-333333333333';
+    runtimeReplies('Start with the oldest unread threads.');
+    clientMock.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ acquired: true }] }) // non-blocking task-scoped lock
+      .mockResolvedValueOnce({ rows: [taskRow] }) // owned task
+      .mockResolvedValueOnce({ rows: [] }) // no replayed assistant row
+      .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'Help me triage.' }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'm-user', task_id: TASK_ID, role: 'user', content: 'What first?',
+            run_id: dispatchID, created_at: '2026-06-26T17:11:00.000Z',
+          },
+          {
+            id: 'm-assistant', task_id: TASK_ID, role: 'assistant',
+            content: 'Start with the oldest unread threads.', run_id: dispatchID,
+            created_at: '2026-06-26T17:11:00.000Z',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/chat`)
+      .send({ message: 'What first?', idempotency_key: dispatchID });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      run_id: dispatchID,
+      session_key: `rem-task-${TASK_ID}`,
+      status: 'completed',
+      message: { role: 'assistant', content: 'Start with the oldest unread threads.' },
+    });
+    expect(runAgentTurnOnSharedRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: { userId: USER_ID, authority: 'authenticated_user' },
+      sessionKey: `rem-task-${TASK_ID}`,
+      idempotencyKey: dispatchID,
+      requestIdentity: expect.stringMatching(/^task-chat:.*:[0-9a-f]{64}$/),
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+      message: expect.stringContaining('PRIOR CONVERSATION (oldest to newest):\nUSER: Help me triage.'),
+    }));
+    const insert = clientMock.query.mock.calls[5];
+    expect(String(insert[0])).toContain('ON CONFLICT (user_id, run_id, role)');
+    expect(insert[1]).toEqual([TASK_ID, USER_ID, 'What first?', dispatchID, 'Start with the oldest unread threads.']);
+    expect(clientMock.release).toHaveBeenCalledOnce();
+  });
+
+  it('POST /tasks/:id/chat replays a persisted dispatch without invoking the runtime', async () => {
+    const dispatchID = '33333333-3333-4333-8333-333333333333';
+    clientMock.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ acquired: true }] }) // non-blocking task-scoped lock
+      .mockResolvedValueOnce({ rows: [taskRow] }) // owned task
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'm-user', task_id: TASK_ID, role: 'user', content: 'What first?',
+            run_id: dispatchID, created_at: '2026-06-26T17:11:00.000Z',
+          },
+          {
+            id: 'm-assistant', task_id: TASK_ID, role: 'assistant', content: 'Already answered.',
+            run_id: dispatchID, created_at: '2026-06-26T17:11:00.000Z',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/chat`)
+      .send({ message: 'What first?', idempotency_key: dispatchID });
+
+    expect(response.status).toBe(200);
+    expect(response.body.message.content).toBe('Already answered.');
+    expect(runAgentTurnOnSharedRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('POST /tasks/:id/chat rejects reuse of a dispatch id for different text', async () => {
+    const dispatchID = '33333333-3333-4333-8333-333333333333';
+    clientMock.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ acquired: true }] }) // non-blocking task-scoped lock
+      .mockResolvedValueOnce({ rows: [taskRow] }) // owned task
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'm-user', task_id: TASK_ID, role: 'user', content: 'Original text',
+            run_id: dispatchID, created_at: '2026-06-26T17:11:00.000Z',
+          },
+          {
+            id: 'm-assistant', task_id: TASK_ID, role: 'assistant', content: 'Original answer',
+            run_id: dispatchID, created_at: '2026-06-26T17:11:00.000Z',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/chat`)
+      .send({ message: 'Different text', idempotency_key: dispatchID });
+
+    expect(response.status).toBe(409);
+    expect(runAgentTurnOnSharedRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('POST /tasks/:id/chat rolls back a failed runtime turn without writing partial history', async () => {
+    const dispatchID = '33333333-3333-4333-8333-333333333333';
+    runAgentTurnOnSharedRuntimeMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'quota_exhausted',
+      provenance: {
+        runtimeId: 'rem_shared', persistenceKind: 'rem_runtime', billingMode: 'rem_managed',
+      },
+    });
+    clientMock.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ acquired: true }] }) // non-blocking lock
+      .mockResolvedValueOnce({ rows: [taskRow] })
+      .mockResolvedValueOnce({ rows: [] }) // replay lookup
+      .mockResolvedValueOnce({ rows: [] }) // transcript
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/chat`)
+      .send({ message: 'Continue', idempotency_key: dispatchID });
+
+    expect(response.status).toBe(429);
+    expect(response.body.error).toContain('Upgrade or wait');
+    expect(clientMock.query.mock.calls.map(([sql]) => String(sql))).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('INSERT INTO task_chat_messages')]),
+    );
+  });
+
+  it('POST /tasks/:id/chat fails fast when another turn owns the task lock', async () => {
+    clientMock.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ acquired: false }] })
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/chat`)
+      .send({
+        message: 'Do not queue this behind a long turn',
+        idempotency_key: '33333333-3333-4333-8333-333333333333',
+      });
+
+    expect(response.status).toBe(409);
+    expect(runAgentTurnOnSharedRuntimeMock).not.toHaveBeenCalled();
+    expect(clientMock.release).toHaveBeenCalledOnce();
+  });
+
   it('agent-run maps a completed verdict to run_status=done and applies the status', async () => {
-    // Real service path: the gateway turn carries the verdict envelope, `task-verdict`
+    // Real service path: the Rem-runtime turn carries the verdict envelope, `task-verdict`
     // reads it, and terminalRunStatus maps it to 'done'.
-    gatewayReplies('Wrapped it up.\nrem.task_verdict.v1 {"status":"completed"}');
+    runtimeReplies('Wrapped it up.\nrem.task_verdict.v1 {"status":"completed"}');
     poolMock.query
       .mockResolvedValueOnce({ rows: [taskRow] }) // loadOwnedTask
       .mockResolvedValueOnce({ rows: [] }) // load comments
@@ -472,7 +720,7 @@ describe('task comments + agent-run routes', () => {
             author_label: 'Rem Cloud',
             body: values[2],
             proposed_status: values[3],
-            runtime: 'gateway',
+            runtime: 'rem_runtime',
             created_at: '2026-06-26T17:10:00.000Z',
           },
         ],
@@ -496,10 +744,219 @@ describe('task comments + agent-run routes', () => {
     expect(insertValues[4]).toBe('pending');
   });
 
+  it('executes a Rem tool-call status proposal through the audited tasks.update lifecycle', async () => {
+    runtimeReplies('', [{
+      name: TASK_VERDICT_TOOL_NAME,
+      toolCallId: 'report-call-1',
+      args: {
+        status: 'completed',
+        comment: 'Wrapped it up.',
+        task_context: 'Permit renewed; receipt saved.',
+      },
+    }]);
+    executeTaskStatusProposalMock.mockResolvedValueOnce({
+      kind: 'succeeded',
+      task: {
+        ...taskRow,
+        status: 'completed',
+        run_status: 'done',
+        run_id: 'run-1',
+        description: 'Permit renewed; receipt saved.',
+      },
+      comment: {
+        id: 'c-agent', task_id: TASK_ID, author_kind: 'cloud_agent',
+        author_label: 'Rem Cloud', body: 'Wrapped it up.', proposed_status: 'completed',
+        previous_status: 'pending', runtime: 'rem_runtime', session_id: 'run-product-1',
+        run_block_code: null, run_block_mode: null,
+        created_at: '2026-06-26T17:10:00.000Z',
+      },
+      effectId: 'effect-1',
+      replayed: false,
+    });
+    poolMock.query
+      .mockResolvedValueOnce({ rows: [taskRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/agent-run`)
+      .send({});
+
+    expect(executeTaskStatusProposalMock).toHaveBeenCalledWith({
+      userId: USER_ID,
+      taskId: TASK_ID,
+      status: 'completed',
+      sessionKey: `rem-task-${TASK_ID}`,
+      proposalRunId: 'rem-run-1',
+      toolCallId: 'report-call-1',
+      externalContentInfluenced: false,
+      productCompletion: {
+        expectedStatus: 'pending',
+        runStatus: 'done',
+        runBlockCode: null,
+        runBlockMode: null,
+        commentBody: 'Wrapped it up.',
+        proposedStatus: 'completed',
+        previousStatus: 'pending',
+        runtime: 'rem_runtime',
+        sessionId: expect.any(String),
+        taskContext: 'Permit renewed; receipt saved.',
+      },
+    });
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('SET run_status = $1')))
+      .toBe(false);
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO task_comments')))
+      .toBe(false);
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('SET description')))
+      .toBe(false);
+    expect(response.body).toMatchObject({
+      body: 'Wrapped it up.', proposed_status: 'completed', previous_status: 'pending',
+      task_run: { status: 'completed', run_status: 'done' },
+    });
+  });
+
+  it('replays an ambiguous audited commit before writing any fallback state', async () => {
+    runtimeReplies('', [{
+      name: TASK_VERDICT_TOOL_NAME,
+      toolCallId: 'report-call-1',
+      args: { status: 'completed', comment: 'Wrapped it up.' },
+    }]);
+    const committedTask = {
+      ...taskRow, status: 'completed', run_status: 'done', run_id: 'run-1',
+    };
+    const committedComment = {
+      id: 'c-agent', task_id: TASK_ID, author_kind: 'cloud_agent',
+      author_label: 'Rem Cloud', body: 'Wrapped it up.', proposed_status: 'completed',
+      previous_status: 'pending', runtime: 'rem_runtime', session_id: 'run-product-1',
+      run_block_code: null, run_block_mode: null,
+      created_at: '2026-06-26T17:10:00.000Z',
+    };
+    executeTaskStatusProposalMock
+      .mockRejectedValueOnce(new Error('response lost after COMMIT'))
+      .mockResolvedValueOnce({
+        kind: 'succeeded',
+        task: committedTask,
+        comment: committedComment,
+        effectId: 'effect-1',
+        replayed: true,
+      });
+    poolMock.query
+      .mockResolvedValueOnce({ rows: [taskRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/agent-run`)
+      .send({});
+
+    expect(response.status).toBe(201);
+    expect(executeTaskStatusProposalMock).toHaveBeenCalledTimes(2);
+    expect(executeTaskStatusProposalMock.mock.calls[1][0]).toEqual(
+      executeTaskStatusProposalMock.mock.calls[0][0],
+    );
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('SET run_status = $1')))
+      .toBe(false);
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO task_comments')))
+      .toBe(false);
+    expect(response.body).toMatchObject({
+      body: 'Wrapped it up.', previous_status: 'pending',
+      task_run: { status: 'completed', run_status: 'done' },
+    });
+  });
+
+  it('does not write fallback state while an audited effect remains pending', async () => {
+    runtimeReplies('', [{
+      name: TASK_VERDICT_TOOL_NAME,
+      toolCallId: 'report-call-1',
+      args: { status: 'completed', comment: 'Wrapped it up.' },
+    }]);
+    executeTaskStatusProposalMock.mockResolvedValueOnce({
+      kind: 'not_applied', reason: 'effect_pending',
+    });
+    poolMock.query
+      .mockResolvedValueOnce({ rows: [taskRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/agent-run`)
+      .send({});
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'Task update outcome is still being verified', retryable: true,
+    });
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('SET run_status = $1')))
+      .toBe(false);
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO task_comments')))
+      .toBe(false);
+  });
+
+  it('does not write fallback state when ambiguous outcome reconciliation is unavailable', async () => {
+    runtimeReplies('', [{
+      name: TASK_VERDICT_TOOL_NAME,
+      toolCallId: 'report-call-1',
+      args: { status: 'completed', comment: 'Wrapped it up.' },
+    }]);
+    executeTaskStatusProposalMock
+      .mockRejectedValueOnce(new Error('response lost after COMMIT'))
+      .mockRejectedValueOnce(new Error('database unavailable during replay'));
+    poolMock.query
+      .mockResolvedValueOnce({ rows: [taskRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/agent-run`)
+      .send({});
+
+    expect(response.status).toBe(503);
+    expect(executeTaskStatusProposalMock).toHaveBeenCalledTimes(2);
+    expect(response.body).toEqual({
+      error: 'Task update outcome is still being verified', retryable: true,
+    });
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('SET run_status = $1')))
+      .toBe(false);
+    expect(poolMock.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO task_comments')))
+      .toBe(false);
+  });
+
+  it('leaves a failed audited proposal unapplied and visible for review', async () => {
+    runtimeReplies('', [{
+      name: TASK_VERDICT_TOOL_NAME,
+      toolCallId: 'report-call-1',
+      args: { status: 'completed', comment: 'I recommend marking this complete.' },
+    }]);
+    poolMock.query
+      .mockResolvedValueOnce({ rows: [taskRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockImplementationOnce(async (_sql: string, values: any[]) => ({
+        rows: [{ ...taskRow, run_status: values[0], run_id: 'run-1' }],
+      }))
+      .mockImplementationOnce(async (_sql: string, values: any[]) => ({
+        rows: [{
+          id: 'c-agent', task_id: TASK_ID, author_kind: 'cloud_agent',
+          author_label: 'Rem Cloud', body: values[2], proposed_status: values[3],
+          previous_status: values[4], runtime: 'rem_runtime',
+          created_at: '2026-06-26T17:10:00.000Z',
+        }],
+      }));
+
+    const response = await request(testApp())
+      .post(`/api/v1/tasks/${TASK_ID}/agent-run`)
+      .send({});
+
+    expect(response.body).toMatchObject({
+      proposed_status: 'completed', previous_status: null,
+      task_run: { status: 'pending', run_status: 'review' },
+    });
+  });
+
   it('agent-run maps a blocked verdict to run_status=blocked (needs-info)', async () => {
     // Agent ran fine but is blocked on missing info — reports `blocked`, which
     // terminalRunStatus maps to run_status='blocked' (feeds the daily-brief sweep).
-    gatewayReplies(
+    runtimeReplies(
       'I need the filing reference before I can proceed.\nrem.task_verdict.v1 {"status":"blocked"}',
     );
     poolMock.query
@@ -518,7 +975,7 @@ describe('task comments + agent-run routes', () => {
             author_label: 'Rem Cloud',
             body: values[2],
             proposed_status: values[3],
-            runtime: 'gateway',
+            runtime: 'rem_runtime',
             created_at: '2026-06-26T17:10:00.000Z',
           },
         ],

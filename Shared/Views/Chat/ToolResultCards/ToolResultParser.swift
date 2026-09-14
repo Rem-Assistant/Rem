@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawKit
+import RemKit
 
 /// Parsed tool result types for rich card rendering.
 enum ParsedToolResult {

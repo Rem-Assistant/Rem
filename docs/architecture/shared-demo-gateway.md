@@ -1,9 +1,9 @@
 # Shared demo gateway (hackathon)
 
 > Historical reference. This shared Railway demo setup is not the current Rem
-> deployment source of truth. Managed backend and Fly gateway rollout is operated
-> separately and is not part of this repo (see the Open-Core Boundary in the
-> top-level `README.md`). Start with `README.md`, `docs/README.md`, and
+> deployment source of truth. Use
+> `deploy/openclaw-gateway/DEPLOYMENT-RUNBOOK.md` for current backend and Fly
+> gateway rollout guidance, and start with `README.md`, `docs/README.md`, and
 > `docs/product/VISION.md` for current product context.
 
 One OpenClaw gateway runs on Railway using the team’s Anthropic API key. Demo users connect to it (dashboard or Rem app) and chat without providing their own key.
@@ -68,5 +68,5 @@ To run a **separate** gateway with a personal API key, deploy again (e.g. new Ra
 
 ## Reference
 
-- Deploy details: managed cloud infrastructure is operated separately and is not part of this repo (see the Open-Core Boundary in the top-level `README.md`).
-- System design: [system-design.md](system-design.md)
+- Deploy details: `deploy/openclaw-gateway/README.md` and `deploy/openclaw-gateway/DEPLOY-RAILWAY.md`
+- System design: `docs/hackathon/system-design.md`

@@ -1,0 +1,9 @@
+// RemMac Debug Configuration
+// Note: $() is an xcconfig trick to produce a literal "//"
+
+// Debug → STAGING (current code), matching Rem/.env.Debug.xcconfig and the
+// decided operating model (docs/rebuild/20-OPERATING-MODEL.md: Debug→staging,
+// Release→prod). So Mac dev builds see current features + the STAGING banner,
+// instead of the stale prod backend. Release still ships against production.
+API_BASE_URL = https:/$()/backend-staging-b87e.up.railway.app
+// API_BASE_URL = https:/$()/backend-production-7d876.up.railway.app

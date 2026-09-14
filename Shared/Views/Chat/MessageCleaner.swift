@@ -7,7 +7,7 @@ import Foundation
 /// timestamps, and talk-mode prompt prefixes.
 ///
 /// For **assistant** messages, `cleanAssistantMessageText` mirrors the upstream
-/// `ChatMarkdownPreprocessor` (in OpenClawChatUI) which is internal to that module.
+/// `ChatMarkdownPreprocessor` (in RemChatUI) which is internal to that module.
 /// It strips channel envelopes, message-ID hints, inbound context/metadata blocks
 /// (fenced JSON), and prefixed timestamps.
 enum MessageCleaner {
@@ -66,7 +66,7 @@ enum MessageCleaner {
         cleaned = skillDump.text
         diagnostics.append(contentsOf: skillDump.diagnostics)
 
-        let standaloneJSON = stripStandaloneOpenClawSkillJSONDumps(cleaned)
+        let standaloneJSON = stripStandaloneRemSkillJSONDumps(cleaned)
         cleaned = standaloneJSON.text
         diagnostics.append(contentsOf: standaloneJSON.diagnostics)
 
@@ -818,7 +818,7 @@ enum MessageCleaner {
         return i
     }
 
-    private static func stripStandaloneOpenClawSkillJSONDumps(_ raw: String) -> SanitizedText {
+    private static func stripStandaloneRemSkillJSONDumps(_ raw: String) -> SanitizedText {
         guard raw.contains(#""openclaw""#),
               raw.contains(#""requires""#),
               raw.contains(#""install""#)
@@ -840,7 +840,7 @@ enum MessageCleaner {
                 continue
             }
 
-            if !inFencedCode, looksLikeStandaloneOpenClawSkillJSON(lines: lines, index: i) {
+            if !inFencedCode, looksLikeStandaloneRemSkillJSON(lines: lines, index: i) {
                 let endIndex = endOfStandaloneJSONBlock(lines: lines, startIndex: i)
                 diagnostics.append(fencedDiagnostic(lines[i..<endIndex].joined(separator: "\n"), language: "json"))
                 i = endIndex
@@ -854,7 +854,7 @@ enum MessageCleaner {
         return SanitizedText(text: output.joined(separator: "\n"), diagnostics: diagnostics)
     }
 
-    private static func looksLikeStandaloneOpenClawSkillJSON(lines: [String], index: Int) -> Bool {
+    private static func looksLikeStandaloneRemSkillJSON(lines: [String], index: Int) -> Bool {
         let current = lines[index].trimmingCharacters(in: .whitespaces)
         guard current == "{" || current.hasPrefix(#"{"openclaw""#) || current.hasPrefix(#"{ "openclaw""#) else {
             return false
@@ -922,9 +922,9 @@ enum MessageCleaner {
     // the header line plus any contiguous `- field: message` detail bullets and
     // route them to diagnostics (mirrors `stripShellAndToolErrors`).
     //
-    // The fix for the underlying misuse lives in the hosted gateway's bootstrap
-    // instructions (operated separately; they teach the model to invoke node
-    // commands via `nodes(action: "invoke")`); this stripper is the
+    // The fix for the underlying misuse lives in the gateway hook
+    // `deploy/openclaw-gateway/hooks/remclaw/REMCLAW.md` (teaches the model to
+    // invoke node commands via `nodes(action: "invoke")`); this stripper is the
     // client-side safety net so any residual leak never renders.
 
     // Header of a tool-argument validation failure. Matches both the bare
@@ -1207,7 +1207,7 @@ enum MessageCleaner {
             cleaned = String(cleaned[range.upperBound...])
         }
 
-        // 4. Strip legacy RemClaw device context preambles from persisted history.
+        // 4. Strip legacy Rem device context preambles from persisted history.
         //    Old format: "[System: You are connected to ...]\n\n"
         //    New format: "[System: Connected to ...]\n\n"
         if let range = cleaned.range(
@@ -1240,6 +1240,15 @@ enum MessageCleaner {
         //     block, so the user's text survives (or nothing, for a block-only control message).
         cleaned = BrowserDirective.stripBlocks(from: cleaned)
 
+        // 4d. Strip the backend task-agent "Run now" scaffolding. A cloud run dispatches the WHOLE
+        //     agent prompt — `SYSTEM_PROMPT + buildUserPrompt(task, comments, instruction)` from
+        //     backend/src/services/task-agent.service.ts — as the user turn on the gateway session,
+        //     so opening that chat shows the entire scaffolding as a giant user bubble. The founder
+        //     is strongly against surfacing this pre-message (#1371): the user should see their own
+        //     ask and Rem's reply, never the prompt plumbing. Reduce it to just the human
+        //     INSTRUCTION (or nothing for a bare Run now, whose placeholder is scaffolding too).
+        cleaned = stripTaskAgentRunScaffolding(cleaned)
+
         // 5. Strip trailing metadata block (appended after message text)
         if let range = cleaned.range(
             of: #"\n\n(?:Conversation info|Untrusted context)\s*\((?:untrusted )?metadata[^)]*\):[\s\S]*$"#,
@@ -1249,6 +1258,36 @@ enum MessageCleaner {
         }
 
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Reduce a backend task-agent run prompt to just the human INSTRUCTION it carried.
+    ///
+    /// The dispatched wire message is `SYSTEM_PROMPT + "\n\n" + buildUserPrompt(...)` (see
+    /// backend/src/services/task-agent.service.ts). It always opens with the system prompt's stable
+    /// first clause and closes with a single `INSTRUCTION:` line — anchoring on BOTH means ordinary
+    /// chat that merely quotes the word "instruction" is never touched. Returns the instruction
+    /// text alone, or `""` when the run carried no instruction (the `(none …)` placeholder is
+    /// scaffolding too, so a bare "Run now" shows no user bubble at all). Non-scaffolding input is
+    /// returned unchanged.
+    static func stripTaskAgentRunScaffolding(_ text: String) -> String {
+        guard text.range(
+            of: #"^You are Rem's task agent,"#,
+            options: .regularExpression
+        ) != nil else {
+            return text
+        }
+        guard let instructionRange = text.range(
+            of: #"(?s)^.*\bINSTRUCTION:[ \t]*"#,
+            options: .regularExpression
+        ) else {
+            return text
+        }
+        let instruction = String(text[instructionRange.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // The "no instruction" placeholder ("(none — propose the next sensible action)") is prompt
+        // plumbing, not something the user typed: drop it so a bare Run now renders no user bubble.
+        if instruction.hasPrefix("(none") { return "" }
+        return instruction
     }
 
     // MARK: - Session Title Usability
@@ -1339,7 +1378,7 @@ enum MessageCleaner {
 /// Read/write session display names via UserDefaults.
 /// Shared between the transport (writes on first message) and views (reads for display).
 enum SessionDisplayNames {
-    private static let key = "RemClaw.sessionDisplayNames"
+    private static let key = "Rem.sessionDisplayNames"
     private static let lock = NSLock()
 
     static func name(for sessionKey: String) -> String? {
@@ -1414,7 +1453,7 @@ enum SessionDisplayNames {
 /// Tracks the timestamp of the last user-sent message per session.
 /// Used by ChatHistoryView instead of the gateway's `updatedAt` (which bumps on any access).
 enum SessionLastMessageTimes {
-    private static let key = "RemClaw.sessionLastMessageTimes"
+    private static let key = "Rem.sessionLastMessageTimes"
 
     static func timestamp(for sessionKey: String) -> Date? {
         let dict = UserDefaults.standard.dictionary(forKey: key) as? [String: Double]
@@ -1438,7 +1477,7 @@ enum SessionLastMessageTimes {
 /// Stores a one-line preview of the last user message per session.
 /// Shown as a subtitle in ChatHistoryView session rows.
 enum SessionLastMessagePreviews {
-    private static let key = "RemClaw.sessionLastMessagePreviews"
+    private static let key = "Rem.sessionLastMessagePreviews"
 
     static func preview(for sessionKey: String) -> String? {
         let dict = UserDefaults.standard.dictionary(forKey: key) as? [String: String]
@@ -1548,14 +1587,14 @@ enum BriefContext {
     static let sessionKeyPrefix = "rem-today-"
     static let durableSessionKey = "rem-orchestrator"
 
-    private static let markdownKey = "RemClaw.briefContextMarkdown"
-    private static let artifactDayKey = "RemClaw.briefContextArtifactDays"
-    private static let injectedKey = "RemClaw.briefContextInjectedKeys"
-    private static let headlineKey = "RemClaw.briefOrchestratorHeadline"
+    private static let markdownKey = "Rem.briefContextMarkdown"
+    private static let artifactDayKey = "Rem.briefContextArtifactDays"
+    private static let injectedKey = "Rem.briefContextInjectedKeys"
+    private static let headlineKey = "Rem.briefOrchestratorHeadline"
     /// `<account>|<local day>` — see `setOrchestratorHeadline`. Replaces an earlier day-only
     /// stamp; the key is renamed so a device upgrading past that version cannot read the old
     /// unscoped value as if it belonged to whoever is signed in now.
-    private static let headlineScopeKey = "RemClaw.briefOrchestratorHeadlineScope"
+    private static let headlineScopeKey = "Rem.briefOrchestratorHeadlineScope"
 
     /// Backing store. `.standard` in the app; a test can point it at an isolated
     /// suite so unit tests don't touch (or race on) real user defaults. Mirrors the
@@ -1823,7 +1862,7 @@ enum BriefContext {
 
 /// Minimal bare-key derivation shared with the transport's `bareSessionKey`
 /// (strips the canonical `agent:<id>:` prefix). Duplicated in `BriefContext`
-/// (Shared, no OpenClawKit dep) so brief-session detection works before the
+/// (Shared, no RemKit dep) so brief-session detection works before the
 /// transport is involved; kept tiny to avoid drift.
 private enum IOSBareKeyHelper {
     static func bare(_ key: String) -> String? {
@@ -1844,7 +1883,7 @@ private enum IOSBareKeyHelper {
 /// This store remains only as a compatibility fallback for previews persisted
 /// by older builds; accepted list responses do not add new entries here.
 enum SessionServerLastMessagePreviews {
-    private static let key = "RemClaw.sessionServerLastMessagePreviews"
+    private static let key = "Rem.sessionServerLastMessagePreviews"
 
     static func preview(for sessionKey: String) -> String? {
         let dict = UserDefaults.standard.dictionary(forKey: key) as? [String: String]

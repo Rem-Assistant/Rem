@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawChatUI
+import RemChatUI
 import OSLog
 
 /// Explicit opt-in for short dogfood sampling runs. Production and ordinary debug launches take
@@ -14,7 +14,7 @@ nonisolated enum ChatLatencyDiagnostics {
 
 /// Lightweight, app-side timing for the chat lifecycle.
 ///
-/// This intentionally lives in Rem rather than OpenClawKit so we can measure
+/// This intentionally lives in Rem rather than RemKit so we can measure
 /// the transport phases that differ between iOS, macOS, local gateways, and
 /// cloud gateways without taking a submodule bump for every instrumentation
 /// adjustment.
@@ -330,7 +330,7 @@ actor ChatLatencyTraceStore {
         platform: String,
         sessionKey: String,
         idempotencyKey: String,
-        phase: OpenClawChatSendPreparationPhase,
+        phase: RemChatSendPreparationPhase,
         startedAtUptimeNanoseconds: UInt64? = nil,
         messageLength: Int,
         attachmentsCount: Int

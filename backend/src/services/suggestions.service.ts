@@ -93,6 +93,23 @@ export function suggestionSnapshotId(briefRevision: string, suggestions: TaskSug
 
 /** Cap so the Agenda shows a helpful few, never a wall (doc 38 §6 — orientation, not noise). */
 const MAX_SUGGESTIONS = 5;
+/**
+ * How many surviving connected-source signals to pull BEFORE clustering. Wider than
+ * `MAX_SUGGESTIONS` because the collapse happens in memory: the founder's inbox turns 10+
+ * near-identical CI-failure emails (each a distinct row with its own `source_ref`, so NOT a
+ * duplicate the ingest key would fold) into ONE card, and a 5-row fetch would show five copies of
+ * the same alert and hide everything else. We fetch a window, group it into clusters, then cap the
+ * CLUSTERS at `MAX_SUGGESTIONS`. Bounded so a pathological inbox can't pull an unbounded set into
+ * memory on every read.
+ */
+const SIGNAL_CLUSTER_FETCH = 200;
+/**
+ * A cluster stem shorter than this is too generic to safely merge on ("hi", "update", "fyi"), so a
+ * row that reduces to one is kept as its OWN singleton — unrelated messages must never collapse
+ * together. Tuned conservatively: the failure we accept is "did not group two things that were the
+ * same", never "grouped two things that were different".
+ */
+const MIN_CLUSTER_STEM_LEN = 12;
 /** How far ahead a calendar event counts as "coming up" and worth prepping for. */
 const CALENDAR_LOOKAHEAD_MS = 36 * 60 * 60 * 1000;
 
@@ -125,6 +142,87 @@ function relativeAge(from: Date, now: Date): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+/**
+ * Short, STABLE (cross-process, cross-run) hex digest of a string. Used to name a cluster's
+ * dismissal key: dismissal is durable, so the same group must hash to the same key on every future
+ * derive. A cryptographic digest is overkill for the collision odds but it is the one function we
+ * already import (`createHash`) that is guaranteed stable, unlike a hand-rolled numeric hash whose
+ * value could drift if the implementation is ever "improved".
+ */
+export function shortHash(input: string): string {
+  return createHash('sha256').update(input).digest('hex').slice(0, 12);
+}
+
+/** Strip the leading Re:/Fwd:/Fw: thread markers so a reply groups with the message it answers. */
+function stripReplyMarkers(s: string): string {
+  let out = s;
+  while (/^(?:re|fwd|fw)\s*:\s*/i.test(out)) out = out.replace(/^(?:re|fwd|fw)\s*:\s*/i, '');
+  return out;
+}
+
+/**
+ * Remove the VOLATILE tokens that make two instances of the same recurring message look distinct:
+ * `#`-ids (issue/PR/run numbers), long hex/uuid/sha fragments, and any date/time/amount/number run.
+ * These are exactly the parts that differ between "PR run failed (#4021)" and "PR run failed
+ * (#4022)". A hex fragment must contain a digit to count, so real words that happen to be all
+ * hex letters ("defaced", "decade") are left alone.
+ */
+function stripVolatileTokens(s: string): string {
+  return s
+    .replace(/#\d[\w-]*/g, ' ')                        // #1234, #1234-abc — issue/PR/run ids
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{6,}\b/g, ' ')  // sha/uuid fragments (must carry a digit)
+    .replace(/\d[\d.,:/\\-]*\d|\d+/g, ' ');            // dates, times, amounts, bare numbers
+}
+
+/** Collapse to a bare `[a-z0-9 ]` stem: drops brackets/punctuation, squashes runs, caps length. */
+function normalizeStem(s: string): string {
+  return s.replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80).trim();
+}
+
+/** Normalize a sender for keying: the address inside `<…>` when present, else the display, lowered. */
+function normalizeSender(sender: string | null): string {
+  if (!sender) return '';
+  const angle = sender.match(/<([^>]+)>/);
+  return (angle ? angle[1] : sender).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * A CONSERVATIVE clustering key for a connected-source signal: rows that share it are the "same"
+ * recurring message and collapse into one card (the founder's 10+ "Build Apple" CI emails, the
+ * repeated Discover charge alerts). Two halves, joined by a NUL so they can never bleed into each
+ * other:
+ *
+ *   sender  — the address inside `<…>` (stable even when the display name wobbles), else the display.
+ *             Two different people saying "lunch?" must NEVER merge, so the sender always scopes.
+ *   stem    — the WHOLE title (falling back to the summary) with only the volatile parts stripped:
+ *             reply markers, then `#`-ids / hex fragments / numbers / dates / amounts. Everything
+ *             else in the line is KEPT and must match — we do NOT truncate to a prefix.
+ *
+ * Whole-line comparison is a DELIBERATE, conservative choice. An earlier version truncated to the
+ * prefix before the first `:` / dash when that prefix was long enough, to fold
+ * "[repo] PR run failed: Build Apple" variants together — but it also collapsed genuinely different
+ * messages that share a generic prefix, and hiding one behind another's "+N similar" is a real harm:
+ * "Notification: A fraud alert…" and "Notification: Your statement is ready" both reduced to
+ * "notification"; "Security alert: new sign-in" swallowed "Security alert: password changed";
+ * "Build Apple" and "Deploy Backend" CI jobs merged into one. Whole-line still folds every
+ * motivating case (the run-number and the dollar-amount are volatile, so they are stripped) while
+ * keeping all of those pairs distinct. The accepted cost is narrow: two different subject FORMATS of
+ * the same alert ("Build Apple #4023" vs "Build Apple (run 4021)") now stay separate — a missed
+ * merge, never a wrong one.
+ *
+ * Returns `''` when the stem reduces below MIN_CLUSTER_STEM_LEN — the caller treats that as "too
+ * generic to merge" and keeps the row as its own singleton. That empty-string escape hatch is the
+ * whole conservatism guarantee: when in doubt we DON'T group.
+ */
+export function signalClusterKey(sender: string | null, title: string, summary: string): string {
+  const base = title.trim() || summary.trim();
+  if (!base) return '';
+  // Volatile-token stripping only, over the WHOLE normalized line (no prefix truncation).
+  const stem = normalizeStem(stripVolatileTokens(stripReplyMarkers(base.toLowerCase())));
+  if (stem.length < MIN_CLUSTER_STEM_LEN) return '';
+  return `${normalizeSender(sender)}\u0000${stem}`;
 }
 
 /**
@@ -219,9 +317,17 @@ export async function deriveSuggestions(
   // guarantee in one operator. `relevance_decision` is NULL for a row nothing has judged yet — a
   // brand-new signal, a row the model timed out on, a batch that came back as unparseable, a policy
   // bump that has not been swept. Every one of those NULLs SURFACES. Only an explicit, stored
-  // 'drop' hides anything. Written as `= 'act'`, a single bad classifier day would silently empty
+  // decision hides anything. Written as `= 'act'`, a single bad classifier day would silently empty
   // the user's suggestions and look exactly like a quiet inbox. Losing a real signal is worse than
   // showing a mediocre one.
+  //
+  // FOUR decisions hold a row back, all of them explicit and stored (aggregation, #1369):
+  //   'drop'     — noise.
+  //   'mention'  — worth a sentence, surfaced as PROSE, never a suggestion card.
+  //   'append'   — folded into an existing parent's gathered region; it is not its own task.
+  //   'complete' — the signal CLOSED an existing task; there is nothing to suggest.
+  // NULL is distinct from all four, so the fail-open property is unchanged: an unjudged row still
+  // surfaces. Only a stored decision suppresses one.
   const signals = await db.query<SignalRow>(
     `SELECT id, source, sender, summary, suggested_title, relevance_title,
             relevance_start_at, received_at
@@ -229,14 +335,41 @@ export async function deriveSuggestions(
       WHERE user_id = $1
         AND btrim(summary) <> ''
         AND relevance_decision IS DISTINCT FROM 'drop'
+        AND relevance_decision IS DISTINCT FROM 'mention'
+        AND relevance_decision IS DISTINCT FROM 'append'
+        AND relevance_decision IS DISTINCT FROM 'complete'
         AND ((source || ':' || id::text) NOT IN
              (SELECT suggestion_key FROM suggestion_dismissals
                WHERE user_id = $1 AND dismissed_at > NOW() - INTERVAL '${DISMISSAL_TTL_DAYS} days'))
       ORDER BY received_at DESC
-      LIMIT ${MAX_SUGGESTIONS}`,
+      LIMIT ${SIGNAL_CLUSTER_FETCH}`, // widened from MAX_SUGGESTIONS: we cluster IN MEMORY below,
+    // so we must see the near-duplicates to collapse them. WHERE (fail-open filters, per-row
+    // dismissals) and ORDER BY (newest-first, so a cluster's first row is its representative) are
+    // deliberately unchanged.
     [userId],
   );
-  for (const row of signals.rows) {
+
+  // Cluster dismissals live in the SAME table but under a synthetic `${source}:cluster:${hash}` key
+  // the WHERE above cannot match against a real row, so they are filtered HERE in memory instead.
+  // (Singleton dismissals are the ordinary `${source}:${id}` keys and are already handled in SQL.)
+  const dismissedClusters = new Set<string>();
+  {
+    const rows = await db.query<{ suggestion_key: string }>(
+      `SELECT suggestion_key FROM suggestion_dismissals
+        WHERE user_id = $1
+          AND suggestion_key LIKE '%:cluster:%'
+          AND dismissed_at > NOW() - INTERVAL '${DISMISSAL_TTL_DAYS} days'`,
+      [userId],
+    );
+    for (const r of rows.rows) dismissedClusters.add(r.suggestion_key);
+  }
+
+  // Build ONE card from a representative row. `count === 1` reproduces the pre-clustering card
+  // BYTE-FOR-BYTE (same key, same subtitle) so a singleton never regresses; `count > 1` adds a
+  // visible "+N similar" so the fold is honest — the user sees the card stands in for several
+  // messages, not one — and carries the stable cluster dismissal key so dismissing it drops the
+  // whole group.
+  const buildSignalCard = (row: SignalRow, count: number, key: string): TaskSuggestion => {
     const label = SOURCE_LABEL[row.source] ?? row.source;
     // Title precedence, best first:
     //   1. `relevance_title` — the OUTCOME the judge named ("Look at why the rem-canary deploy
@@ -254,7 +387,6 @@ export async function deriveSuggestions(
       || row.suggested_title?.trim()
       || `Reply to ${row.sender?.trim() || label}`;
     const age = relativeAge(new Date(row.received_at), now);
-    const key = `${row.source}:${row.id}`;
 
     // ── THE TIMEBLOCK ────────────────────────────────────────────────────────
     // A task's `start_date` IS its timeblock, so the judge's recommended time is simply the
@@ -274,21 +406,64 @@ export async function deriveSuggestions(
     // not a proposal, and rendering "Today 3:00 PM" on every card would be false precision that
     // teaches the user to ignore the one time we actually meant.
     const timeLabel = recommended ? `${formatSuggestedTimeLabel(recommended, now, timezone)} · ` : '';
+    // "+N similar" LAST — the count is the least urgent piece and must not push the time or the
+    // summary off the two-line clamp. Absent entirely for a singleton, so the format is unchanged.
+    const moreLabel = count > 1 ? ` · +${count - 1} similar` : '';
 
-    out.push({
+    return {
       key,
       actionId: suggestionActionId(userId, key, 'createTask'),
       source: (row.source as SuggestionSource),
       title,
       // Time FIRST: the card clamps the subtitle to two lines, and a recommendation the user
       // cannot see is a recommendation they cannot decline.
-      subtitle: `${timeLabel}${row.summary} · ${label} · ${age}`,
+      subtitle: `${timeLabel}${row.summary} · ${label} · ${age}${moreLabel}`,
       action: {
         kind: 'createTask',
         taskTitle: title,
         startDate: (recommended ?? laterToday).toISOString(),
       },
-    });
+    };
+  };
+
+  // Group the widened fetch by cluster key, PRESERVING order. The rows arrive newest-first and a
+  // Map keeps insertion order, so each cluster's FIRST row is its most-recent member — the natural
+  // representative. A row with no confident stem (`signalClusterKey` → '') gets a per-row group id
+  // so it can never merge with anything, and it will emit under today's `${source}:${id}` key.
+  const clusters = new Map<string, { stemKey: string; rep: SignalRow; count: number }>();
+  for (const row of signals.rows) {
+    const stemKey = signalClusterKey(row.sender, row.relevance_title || row.suggested_title || '', row.summary);
+    const groupId = stemKey || `singleton\u0000${row.source}:${row.id}`;
+    const existing = clusters.get(groupId);
+    if (existing) existing.count += 1;
+    else clusters.set(groupId, { stemKey, rep: row, count: 1 });
+  }
+
+  // Emit at most MAX_SUGGESTIONS CLUSTERS (not rows), in newest-first cluster order.
+  let emittedSignals = 0;
+  for (const cluster of clusters.values()) {
+    if (emittedSignals >= MAX_SUGGESTIONS) break;
+    // A row keeps its OWN cluster dismissal identity whenever it has a confident stem, even when it
+    // is the lone survivor right now. `stemKey` is non-empty exactly for those rows (a stemless row
+    // has a per-row `singleton␀…` group id and can never reach count > 1), so this covers both a
+    // real >1 group AND a dismissed group that has since shrunk to one member.
+    const clusterDismissKey = cluster.stemKey
+      ? `${cluster.rep.source}:cluster:${shortHash(cluster.stemKey)}`
+      : null;
+    if (clusterDismissKey && dismissedClusters.has(clusterDismissKey)) continue; // group waved away (TTL)
+
+    if (cluster.count === 1) {
+      // Singleton: identical key + card as before clustering existed. It still EMITS under the
+      // ordinary `${source}:${id}` key — only the SUPPRESSION check above consults the cluster key,
+      // so a dismissed group that dwindled to one member stays hidden for the TTL without changing
+      // the singleton's shape for everything else.
+      out.push(buildSignalCard(cluster.rep, 1, `${cluster.rep.source}:${cluster.rep.id}`));
+      emittedSignals += 1;
+      continue;
+    }
+    // Real cluster (>1 member): the card carries the stable group-level dismissal key.
+    out.push(buildSignalCard(cluster.rep, cluster.count, clusterDismissKey!));
+    emittedSignals += 1;
   }
 
   // ── overdue → reschedule ──────────────────────────────────────────────────
@@ -382,6 +557,57 @@ export async function dismissSuggestion(userId: string, key: string): Promise<vo
   );
 }
 
+/** One signal the judge routed to PROSE (a 'mention'): worth a sentence, never a task. */
+export interface SignalMention {
+  id: string;
+  source: string;
+  sender: string | null;
+  /** The judge's one-line note, or the raw summary when it named none. */
+  note: string;
+  receivedAt: string;
+}
+
+/**
+ * The prose/on-ask surface for aggregation's `mention` disposition (#1369). These are signals the
+ * judge decided are worth telling the user about but NOT worth a task — a new-trusted-device
+ * security notice, an FYI, something already tracked elsewhere. They must NEVER appear as a
+ * suggestion card (`deriveSuggestions` excludes them); this reader lets the brief / an on-ask reply
+ * mention them as sentences instead. Read-only, newest first, bounded.
+ *
+ * Deliberately a separate reader, not a flag on `deriveSuggestions`: a suggestion is a staged write
+ * with a one-tap trigger, and the whole point of `mention` is that it has no such affordance.
+ */
+export async function selectMentions(
+  userId: string,
+  limit = 5,
+  db: DatabaseQueryable = pool,
+): Promise<SignalMention[]> {
+  const { rows } = await db.query<{
+    id: string;
+    source: string;
+    sender: string | null;
+    summary: string;
+    relevance_title: string | null;
+    received_at: string;
+  }>(
+    `SELECT id, source, sender, summary, relevance_title, received_at
+       FROM channel_signals
+      WHERE user_id = $1
+        AND relevance_decision = 'mention'
+        AND btrim(summary) <> ''
+      ORDER BY received_at DESC
+      LIMIT $2`,
+    [userId, limit],
+  );
+  return rows.map((row) => ({
+    id: String(row.id),
+    source: String(row.source),
+    sender: row.sender === null ? null : String(row.sender),
+    note: row.relevance_title?.trim() || row.summary,
+    receivedAt: String(row.received_at),
+  }));
+}
+
 export interface ChannelSignalInput {
   source: string; // 'gmail' | 'whatsapp' | 'discord' | …
   sourceRef: string; // stable per-source id (message/thread id) — makes ingest idempotent
@@ -452,6 +678,22 @@ export async function ingestSignalDetailed(
                      WHEN channel_signals.summary IS DISTINCT FROM EXCLUDED.summary
                        OR channel_signals.sender IS DISTINCT FROM EXCLUDED.sender
                      THEN NULL ELSE channel_signals.relevance_judged_at END,
+                   relevance_attempt_id = CASE
+                     WHEN channel_signals.summary IS DISTINCT FROM EXCLUDED.summary
+                       OR channel_signals.sender IS DISTINCT FROM EXCLUDED.sender
+                     THEN NULL ELSE channel_signals.relevance_attempt_id END,
+                   relevance_attempt_policy = CASE
+                     WHEN channel_signals.summary IS DISTINCT FROM EXCLUDED.summary
+                       OR channel_signals.sender IS DISTINCT FROM EXCLUDED.sender
+                     THEN NULL ELSE channel_signals.relevance_attempt_policy END,
+                   relevance_attempt_fingerprint = CASE
+                     WHEN channel_signals.summary IS DISTINCT FROM EXCLUDED.summary
+                       OR channel_signals.sender IS DISTINCT FROM EXCLUDED.sender
+                     THEN NULL ELSE channel_signals.relevance_attempt_fingerprint END,
+                   relevance_attempt_bound_at = CASE
+                     WHEN channel_signals.summary IS DISTINCT FROM EXCLUDED.summary
+                       OR channel_signals.sender IS DISTINCT FROM EXCLUDED.sender
+                     THEN NULL ELSE channel_signals.relevance_attempt_bound_at END,
                    -- The recommended TIME is part of the same judgment and decays with it. A
                    -- message edited from "call me Tuesday" to "call me Friday" must not keep
                    -- Tuesday: clearing re-queues the row for the judge, and a NULL meanwhile means

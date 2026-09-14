@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Auto-detect Mac local IP and update RemClaw debug + local dev URLs.
+# Auto-detect Mac local IP and update Rem debug + local dev URLs.
 # Run from repo root: ./scripts/update-local-ip.sh
 # Other devs run this once to set their LAN IP everywhere.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_FILE="$REPO_ROOT/RemClaw/.env.Debug.xcconfig"
+CONFIG_FILE="$REPO_ROOT/Rem/.env.Debug.xcconfig"
 BACKEND_ENV="$REPO_ROOT/backend/.env.local"
 
 get_local_ip() {
@@ -31,7 +31,7 @@ fi
 TEMP_DIR="${TEMP_DIR:-/tmp}"
 UPDATED=()
 
-# 1. RemClaw/.env.Debug.xcconfig — API_BASE_URL for iOS app
+# 1. Rem/.env.Debug.xcconfig — API_BASE_URL for iOS app
 if [ -f "$CONFIG_FILE" ]; then
   TEMP_FILE="$TEMP_DIR/remclaw.env.Debug.xcconfig.$$"
   EMPTY_VAR_STR='$()'
@@ -42,7 +42,7 @@ if [ -f "$CONFIG_FILE" ]; then
     }
     { print }
   ' "$CONFIG_FILE" > "$TEMP_FILE" 2>/dev/null && mv "$TEMP_FILE" "$CONFIG_FILE" 2>/dev/null; then
-    UPDATED+=("API_BASE_URL in RemClaw/.env.Debug.xcconfig")
+    UPDATED+=("API_BASE_URL in Rem/.env.Debug.xcconfig")
   else
     rm -f "$TEMP_FILE"
   fi

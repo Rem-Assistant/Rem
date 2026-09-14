@@ -2,8 +2,8 @@ import Foundation
 
 /// Task collaboration model — shared across iOS and macOS.
 ///
-/// The Task is the long-lived unit of work; multiple runtimes (the human, a GMI
-/// AgentBox cloud agent, the local Mac/iOS gateway) leave **attributed comments**
+/// The Task is the long-lived unit of work; multiple runtimes (the human, legacy cloud/local
+/// engines, and the shared Rem runtime) leave **attributed comments**
 /// against it. Canonical store is the backend `task_comments` table; these types
 /// mirror that JSON. See docs/agentbox/CONTRACT.md.
 ///
@@ -24,18 +24,19 @@ public enum TaskAuthorKind: String, Codable, Sendable, Hashable {
 public enum TaskRuntimeKind: String, Codable, Sendable, Hashable, CaseIterable {
     case agentbox          // GMI AgentBox cloud agent (legacy)
     case gateway           // per-user cloud OpenClaw gateway (orchestrator sweep, migration 031)
+    case remRuntime = "rem_runtime" // shared, Rem-owned cloud runtime (migration 124)
     case localMac = "local_mac"   // Mac OpenClaw gateway
     case localiOS = "local_ios"   // iOS OpenClaw node
 
     public var displayName: String {
         switch self {
-        case .agentbox, .gateway: "Rem"
+        case .agentbox, .gateway, .remRuntime: "Rem"
         case .localMac: "Mac Runtime"
         case .localiOS: "iPhone Runtime"
         }
     }
 
-    public var isCloud: Bool { self == .agentbox || self == .gateway }
+    public var isCloud: Bool { self == .agentbox || self == .gateway || self == .remRuntime }
 
     /// The runtimes a user may actually assign a task to.
     ///

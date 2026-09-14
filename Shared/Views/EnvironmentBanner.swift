@@ -14,19 +14,11 @@ enum AppBackendEnvironment: Equatable {
     case local
     case unknown
 
-    /// Host substrings that identify the production and staging backends. These are
-    /// intentionally placeholders in the open-core repo — set them to the real backend
-    /// host slugs in your private build configuration (they are matched against the
-    /// `APIBaseURL` baked into the build). The `#if DEBUG` preview samples below match
-    /// these same tokens so every banner variant stays visible in Canvas.
-    static let productionHostToken = "your-production-host"
-    static let stagingHostToken = "your-staging-host"
-
     static func detect(from urlString: String) -> AppBackendEnvironment {
         let u = urlString.lowercased()
         if u.isEmpty { return .unknown }
-        if u.contains(productionHostToken) { return .production }
-        if u.contains(stagingHostToken) { return .staging }
+        if u.contains("backend-production-7d876") { return .production }
+        if u.contains("backend-staging-b87e") { return .staging }
         if u.contains("localhost") || u.contains("127.0.0.1")
             || u.range(of: #"://(10|192\.168|172\.(1[6-9]|2\d|3[01]))\."#, options: .regularExpression) != nil {
             return .local
@@ -160,9 +152,9 @@ extension View {
 /// must actually resolve to its labelled variant.
 private enum BannerPreviewSamples {
     static let cases: [(env: AppBackendEnvironment, url: String)] = [
-        (.production, "https://YOUR-PRODUCTION-HOST.example"),
-        (.staging, "https://YOUR-STAGING-HOST.example"),
-        (.preview("backend-pr-123"), "https://backend-pr-123.example"),
+        (.production, "https://backend-production-7d876.up.railway.app"),
+        (.staging, "https://backend-staging-b87e.up.railway.app"),
+        (.preview("backend-pr-123"), "https://backend-pr-123.up.railway.app"),
         (.local, "http://localhost:8080"),
         (.unknown, "https://some-other-host.example.com"),
     ]

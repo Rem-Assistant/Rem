@@ -6,7 +6,7 @@ import Foundation
 /// name field.
 ///
 /// Pre-warmed pool gateways are created with the Fly app name
-/// `remclaw-pool-<id>` (by the managed pre-warm pool pipeline). On
+/// `remclaw-pool-<id>` (`pool.service.ts` `createPreWarmedGateway`). On
 /// assignment that app is handed to the user as-is — Fly apps cannot be renamed
 /// in place, and re-creating a `remclaw-{userId[:8]}` app would defeat the whole
 /// point of the pool (<30s assign). So the user's real `gateway_url` /
@@ -279,7 +279,7 @@ struct GatewayConfig: Codable, Identifiable, Sendable, Equatable {
     /// flow) rather than a long-lived shared gateway token. Source of truth
     /// for the connect-time auth router in `GatewayClient` /
     /// `MacGatewayClient`: when `true`, `token` is passed as
-    /// `bootstrapToken:` to OpenClawKit's `GatewayNodeSession.connect(...)`,
+    /// `bootstrapToken:` to RemKit's `GatewayNodeSession.connect(...)`,
     /// which serializes it as `auth.bootstrapToken` on the wire and triggers
     /// the upstream device-token handshake (`GatewayChannel.swift:430-440,
     /// 545-607`). When `false` / `nil`, `token` is passed as `token:` →

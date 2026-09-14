@@ -238,6 +238,12 @@ beforeAll(async () => {
     )
   `);
   await h.db.query(`INSERT INTO users (id) VALUES ($1)`, [USER_ID]);
+  await h.db.exec(`CREATE TABLE usage_events (
+    id BIGSERIAL PRIMARY KEY, user_id UUID NOT NULL, event_id TEXT UNIQUE,
+    counts_as_request BOOLEAN NOT NULL DEFAULT TRUE,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0
+  )`);
   // The REAL migration: the unique key and column types under test are defined there, not here.
   await h.db.exec(
     fs.readFileSync(path.join(migrationsDir, '039_create_channel_signals.sql'), 'utf8'),
@@ -251,6 +257,9 @@ beforeAll(async () => {
   // change, so the ON CONFLICT clause does not compile without the column.
   await h.db.exec(
     fs.readFileSync(path.join(migrationsDir, '122_add_signal_suggested_time.sql'), 'utf8'),
+  );
+  await h.db.exec(
+    fs.readFileSync(path.join(migrationsDir, '125_create_rem_agent_runs.sql'), 'utf8'),
   );
 
   const composio = await import('./composio.service.js');

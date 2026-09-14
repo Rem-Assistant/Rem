@@ -10,6 +10,9 @@ import briefRoutes from './routes/brief.routes.js';
 import routinesRoutes from './routes/routines.routes.js';
 import internalRoutinesRoutes from './routes/internal-routines.routes.js';
 import authRoutes from './routes/auth.routes.js';
+import deployRoutes from './routes/deploy.routes.js';
+import usageRoutes from './routes/usage.routes.js';
+import iapRoutes from './routes/iap.routes.js';
 import pushRoutes from './routes/push.routes.js';
 import userMemoryRoutes from './routes/user-memory.routes.js';
 import composioRoutes from './routes/composio.routes.js';
@@ -18,6 +21,7 @@ import organizationRoutes from './routes/organization.routes.js';
 import suggestionsRoutes from './routes/suggestions.routes.js';
 import automationsRoutes from './routes/automations.routes.js';
 import usersRoutes from './routes/users.routes.js';
+import conversationsRoutes from './routes/conversations.routes.js';
 import { pool } from './db/pool.js';
 import { env } from './config/env.js';
 import { extractClientInfo } from './middleware/client-info.js';
@@ -73,6 +77,7 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1', gatewayRoutes);
+app.use('/api/v1', deployRoutes);
 app.use('/api/v1', tasksRoutes);
 app.use('/api/v1', digestsRoutes);
 app.use('/api/v1', briefRoutes);
@@ -80,7 +85,10 @@ app.use('/api/v1', routinesRoutes);
 // Internal routine-run webhook (shared-secret auth — NOT requireJwt). Path is
 // /api/v1/internal/routines/:id/run. No longer the scheduled path (scheduling moved to
 // the backend cron script run-routines.ts); kept as a manual/programmatic trigger seam.
+// Placed before usage/iap which scope their own auth.
 app.use('/api/v1', internalRoutinesRoutes);
+app.use('/api/v1/usage', usageRoutes);
+app.use('/api/v1/iap', iapRoutes);
 app.use('/api/v1', pushRoutes);
 app.use('/api/v1', userMemoryRoutes);
 app.use('/api/v1', composioRoutes);
@@ -89,6 +97,7 @@ app.use('/api/v1', organizationRoutes);
 app.use('/api/v1', suggestionsRoutes);
 app.use('/api/v1', automationsRoutes);
 app.use('/api/v1', usersRoutes);
+app.use('/api/v1', conversationsRoutes);
 
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
 

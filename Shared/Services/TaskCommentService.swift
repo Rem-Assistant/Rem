@@ -2,8 +2,8 @@ import Foundation
 
 /// Service seam for the **task collaboration thread** (CONTRACT.md §4).
 ///
-/// The Task is the long-lived unit of work; the human, a GMI AgentBox cloud agent,
-/// and the local Mac/iOS gateway all leave attributed `TaskComment`s against it.
+/// The Task is the long-lived unit of work; the human and Rem-owned runtime
+/// leave attributed `TaskComment`s against it.
 /// This protocol is the read/write surface the comment-thread UI talks to.
 ///
 /// Canonical store is the backend `task_comments` table. Concrete implementation
@@ -12,10 +12,9 @@ import Foundation
 /// Result of a cloud agent run: the persisted reply comment plus the stable
 /// per-task session key the backend stamped at run start (`task_run.session_key`,
 /// #971). The session key lets the client route "Open conversation" to the same
-/// gateway session the backend ran against BEFORE the next full task sync lands —
-/// without it, the local task's `sessionKey` stays `nil` and the continuation chat
-/// opens on the pre-run `task-<slug>` key, then switches after sync, splitting the
-/// conversation across two sessions.
+/// stable Rem-owned conversation before the next full task sync lands. Without it,
+/// the local task's `sessionKey` stays `nil` and older clients may open the retired
+/// `task-<slug>` identity, splitting one task across two histories.
 public struct CloudAgentRunResult: Sendable {
     public let comment: TaskComment
     /// The stamped `rem-task-<taskId>` key from the run response, or `nil` if the
@@ -29,6 +28,28 @@ public struct CloudAgentRunResult: Sendable {
     }
 }
 
+/// Result of one user-authored continuation in a task's Rem-owned conversation.
+public struct TaskChatContinuationResult: Decodable, Sendable {
+    public let runId: String
+    public let sessionKey: String
+    public let status: String
+    public let message: TaskChatMessage
+
+    public init(runId: String, sessionKey: String, status: String, message: TaskChatMessage) {
+        self.runId = runId
+        self.sessionKey = sessionKey
+        self.status = status
+        self.message = message
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case runId = "run_id"
+        case sessionKey = "session_key"
+        case status
+        case message
+    }
+}
+
 @MainActor
 public protocol TaskCommentProviding: AnyObject {
     /// Read the full thread for a task (oldest → newest).
@@ -39,7 +60,7 @@ public protocol TaskCommentProviding: AnyObject {
     /// Returns the persisted comment (`author_kind == .user`).
     func postComment(taskId: String, body: String, proposedStatus: String?) async throws -> TaskComment
 
-    /// Trigger the GMI AgentBox cloud agent to act on the task. The backend runs
+    /// Trigger Rem's runtime to act on the task. The backend runs
     /// the agent and persists its reply as a comment, which is returned here
     /// (`author_kind == .cloud_agent`). Recovery: backend returns a labelled stub
     /// comment rather than failing, so the thread never dead-ends (CONTRACT §8).
@@ -58,18 +79,26 @@ public protocol TaskCommentProviding: AnyObject {
     /// which the task-scoped chat renders as REAL prior messages so opening it
     /// continues the conversation rather than landing in an empty composer (#869).
     func chatTranscript(taskId: String) async throws -> [TaskChatMessage]
+
+    /// Continue the task conversation on Rem's shared runtime. `idempotencyKey` is
+    /// stable for one composer send and prevents duplicate model work/history rows.
+    func continueChat(
+        taskId: String,
+        message: String,
+        idempotencyKey: String
+    ) async throws -> TaskChatContinuationResult
 }
 
 // MARK: - Concrete (backend REST)
 
-/// Talks to the RemClaw Express backend task-comment endpoints (CONTRACT.md §4).
+/// Talks to the Rem Express backend task-comment endpoints (CONTRACT.md §4).
 ///
 /// Reuses the app's existing authenticated HTTP client for base-URL + JWT +
 /// 401-refresh, exactly like `RemTaskApiService` and the other shared sheets:
 /// - iOS:   `AuthenticatedHttpClient.request(...)`
-///          (RemClaw/Sources/Services/Auth/AuthenticatedHttpClient.swift:53)
+///          (Rem/Sources/Services/Auth/AuthenticatedHttpClient.swift:53)
 /// - macOS: `MacAuthenticatedHttpClient.request(...)`
-///          (RemClawMac/Sources/Gateway/MacAuthenticatedHttpClient.swift:78)
+///          (RemMac/Sources/Gateway/MacAuthenticatedHttpClient.swift:78)
 ///
 /// This is the same `#if os(iOS)` split that `Shared/Views/CloudGatewayDeploySheet.swift`
 /// and `Shared/Views/SharedDeleteAccountSheet.swift` already use — no new auth path.
@@ -168,17 +197,47 @@ public final class TaskCommentService: TaskCommentProviding {
         return try decoder.decode(ChatTranscriptEnvelope.self, from: data).messages
     }
 
+    public func continueChat(
+        taskId: String,
+        message: String,
+        idempotencyKey: String
+    ) async throws -> TaskChatContinuationResult {
+        let httpBody = try JSONSerialization.data(withJSONObject: [
+            "message": message,
+            "idempotency_key": idempotencyKey,
+        ])
+        let (data, http) = try await Self.request(
+            path: tasksPath(taskId, "/chat"),
+            method: "POST",
+            body: httpBody,
+            timeout: 45
+        )
+        try Self.check(http, data: data)
+        return try decoder.decode(TaskChatContinuationResult.self, from: data)
+    }
+
     // MARK: Transport (platform-split, mirrors existing shared sheets)
 
     private static func request(
         path: String,
         method: String,
-        body: Data? = nil
+        body: Data? = nil,
+        timeout: TimeInterval = 30
     ) async throws -> (Data, HTTPURLResponse) {
         #if os(iOS)
-        return try await AuthenticatedHttpClient.request(path: path, method: method, body: body)
+        return try await AuthenticatedHttpClient.request(
+            path: path,
+            method: method,
+            body: body,
+            timeout: timeout
+        )
         #else
-        return try await MacAuthenticatedHttpClient.request(path: path, method: method, body: body)
+        return try await MacAuthenticatedHttpClient.request(
+            path: path,
+            method: method,
+            body: body,
+            timeout: timeout
+        )
         #endif
     }
 
@@ -308,6 +367,28 @@ public final class MockTaskCommentService: TaskCommentProviding {
             )
         }
         return messages
+    }
+
+    public func continueChat(
+        taskId: String,
+        message: String,
+        idempotencyKey: String
+    ) async throws -> TaskChatContinuationResult {
+        try? await Task.sleep(for: simulatedDelay)
+        let assistantTurn = TaskChatMessage(
+            id: "\(idempotencyKey)-assistant",
+            taskId: taskId,
+            role: "assistant",
+            content: "Here’s the next step for this task.",
+            runId: idempotencyKey,
+            createdAt: Self.nowISO()
+        )
+        return TaskChatContinuationResult(
+            runId: idempotencyKey,
+            sessionKey: "rem-task-\(taskId)",
+            status: "completed",
+            message: assistantTurn
+        )
     }
 
     // MARK: Sample data

@@ -30,8 +30,8 @@ DerivedData/
 .DS_Store
 
 # The iOS/macOS apps and the vendored gateway source are not part of the backend image.
-RemClaw/
-RemClawMac/
+Rem/
+RemMac/
 openclaw/
 _reference/
 graphify-out/

@@ -38,7 +38,7 @@ function gitRepoRoot() {
 // ── Config ─────────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = gitRepoRoot();
-const REPO = "Rem-Assistant/RemClaw";
+const REPO = "Rem-Assistant/Rem";
 const ROADMAP_PROJECT_TITLE = process.env.SYMPHONY_PROJECT_TITLE ?? "Rem Roadmap";
 const DISPATCH_LABEL = process.env.SYMPHONY_DISPATCH_LABEL ?? "dispatch";
 const DISPATCH_STATUSES = parseList(process.env.SYMPHONY_DISPATCH_STATUSES ?? "Ready,Dispatch");
@@ -58,7 +58,9 @@ const REDISPATCH_COMPLETED = process.env.SYMPHONY_REDISPATCH_COMPLETED === "1";
 const MAX_CONCURRENT = parseInt(process.env.SYMPHONY_MAX ?? "3");
 const MAX_RETRIES = parseInt(process.env.SYMPHONY_MAX_RETRIES ?? "3");
 const MAX_BACKOFF_MS = parseInt(process.env.SYMPHONY_MAX_BACKOFF_MS ?? "300000"); // 5 min
-const REQUIRED_SUBMODULES = parseList(process.env.SYMPHONY_REQUIRED_SUBMODULES ?? "openclaw");
+// The gateway SDK is vendored in-tree at Packages/RemKit — there is no git
+// submodule, so no submodule bootstrap is required by default.
+const REQUIRED_SUBMODULES = parseList(process.env.SYMPHONY_REQUIRED_SUBMODULES ?? "");
 
 function parseList(value) {
   return String(value)

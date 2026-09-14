@@ -1,6 +1,6 @@
 /**
  * Shared gateway config defaults.
- * Single source of truth for values used by the managed deploy and fleet config-patch pipelines.
+ * Single source of truth for values used by deploy.service.ts and patch-config-all-gateways.ts.
  */
 
 // ─── Managed default model + provider ───────────────────────────────────────
@@ -182,8 +182,8 @@ export function buildGatewayConfigPatch(
     //      (denylist > allowlist, openclaw src/agents/openclaw-tools.ts:332). With no `gateway`
     //      tool the agent can neither `restart` NOR `config.patch`, so it can't undo layer 1. This
     //      matches the REMCLAW rule that gateway lifecycle/config is operator-only, never chat.
-    // Legitimate restarts remain operator-controlled: the hosted gateway image's kill+respawn on
-    // config-patch/onboarding (operated separately) and image redeploys do NOT go
+    // Legitimate restarts remain operator-controlled: the wrapper's kill+respawn on
+    // config-patch/onboarding (deploy/openclaw-gateway/src/server.js) and image redeploys do NOT go
     // through the agent tool and are unaffected.
     commands: { restart: false },
     tools: { deny: ["gateway"] },
@@ -212,8 +212,9 @@ export function buildGatewayConfigPatch(
     // allowlist (…:226, cause "not-in-allowlist") and would disable every other
     // bundled plugin. The per-entry form is additive. The gateway's plugin-
     // sanitizer keeps these entries because each id resolves under
-    // /openclaw/extensions, and every extension is built into the hosted gateway
-    // image (operated separately), so enabling them can't
+    // /openclaw/extensions (deploy/openclaw-gateway/src/plugin-sanitizer.js), and
+    // every extension is built into the image (deploy/openclaw-gateway/Dockerfile
+    // `find ./extensions … | pnpm install && pnpm build`), so enabling them can't
     // fail on missing runtime deps (baileys etc.).
     //
     //   • browser  — headless-Chromium web automation. `enabledByDefault: true`
@@ -225,8 +226,8 @@ export function buildGatewayConfigPatch(
     //     openclaw.plugin.json), so WITHOUT this they do NOT load and the in-chat
     //     login tool (`whatsapp_login`) is absent. When a user asked to connect
     //     WhatsApp, the agent then tried to enable the plugin + restart the
-    //     gateway via `systemctl --user` — which does not exist in our hosted
-    //     runtime (the gateway image, operated separately, runs the gateway as a
+    //     gateway via `systemctl --user` — which does not exist in our wrapper
+    //     runtime (deploy/openclaw-gateway/src/server.js runs the gateway as a
     //     child process, not under systemd) — and the flow hung/timed out before
     //     ever showing a QR. Pre-enabling here means the plugin is already loaded,
     //     so connecting only needs the agent to call `whatsapp_login` (QR) — no
@@ -238,9 +239,10 @@ export function buildGatewayConfigPatch(
         discord: { enabled: true },
         // ── Metering: per-turn LLM usage reporting (PR2) ──────────────────────
         //
-        // First-party Rem extension vendored into the hosted gateway image
-        // (operated separately; the billing extension is compiled into the
-        // openclaw workspace by the image build). It registers OpenClaw's `llm_output` plugin
+        // First-party Rem extension vendored into the gateway image
+        // (deploy/openclaw-gateway/extensions/remclaw-billing, COPYed into the
+        // openclaw workspace and compiled to dist/extensions/remclaw-billing by
+        // the Dockerfile build). It registers OpenClaw's `llm_output` plugin
         // hook — the only signal that carries token usage — and POSTs each
         // turn's usage to /api/v1/usage/record (idempotent via event_id=runId,
         // PR1 #966) so managed GMI chat is metered. Best-effort: a failed report
@@ -315,8 +317,8 @@ export function buildGatewayConfigPatch(
             vaultMode: 'bridge',
             // Pin the wiki vault under the gateway's PERSISTED workspace
             // (`OPENCLAW_WORKSPACE_DIR` = /data/workspace, on the Fly/Railway
-            // persistent volume — set by the hosted gateway image, operated
-            // separately). By default the vault would land at
+            // persistent volume — deploy/openclaw-gateway/src/server.js:17,
+            // DEPLOY-RAILWAY.md). By default the vault would land at
             // `~/.openclaw/wiki/main` (openclaw/docs/plugins/memory-wiki.md:382),
             // OUTSIDE the volume, so it would (a) not be readable by the existing
             // Settings→Memory endpoints (#949: GET /setup/api/workspace/{list,file}
@@ -358,10 +360,10 @@ export function buildGatewayConfigPatch(
     browser: {
       enabled: true,
       // Chromium refuses to start its sandbox as root, and our gateway image has no USER
-      // directive (the image is operated separately), so the browser died at launch:
+      // directive (deploy/openclaw-gateway/Dockerfile), so the browser died at launch:
       //   "Running as root without --no-sandbox is not supported" (crbug.com/638180)
       //   → "Failed to start Chrome CDP on port 18800 for profile openclaw"
-      // Verified live on remclaw-00000000 — this is the wall immediately behind the SSRF
+      // Verified live on remclaw-f6e34084 — this is the wall immediately behind the SSRF
       // one; both must be set or the browser is unusable.
       //
       // Upstream rightly says keep this off where possible (schema.help.ts: "process
@@ -378,8 +380,8 @@ export function buildGatewayConfigPatch(
       // Upstream defaults `headless` to FALSE (openclaw src/config/types.browser.ts:72), so
       // Chromium tries to open a window and dies on a headless Fly machine:
       //   "Missing X server or $DISPLAY" → "The platform failed to initialize. Exiting."
-      // Verified live on remclaw-00000000 — the wall immediately behind noSandbox. The
-      // hosted image already describes this as "headless Chromium"; nothing ever set the
+      // Verified live on remclaw-f6e34084 — the wall immediately behind noSandbox. Our
+      // Dockerfile comment already calls this "headless Chromium"; nothing ever set the
       // flag. CDP screenshots/snapshots work headless, so the in-app preview and
       // takeover surfaces are unaffected.
       headless: true,
@@ -392,8 +394,8 @@ export function buildGatewayConfigPatch(
       // this ref (which is exactly why localCdpReadyTimeoutMs isn't in its schema, and why
       // setting it crash-looped the fleet — #999/#1000).
       //
-      // So the hosted image owns the browser now: it starts Chromium at gateway boot and keeps
-      // it alive (the gateway image, operated separately), and this flag makes
+      // So the wrapper owns the browser now: it starts Chromium at gateway boot and keeps
+      // it alive (deploy/openclaw-gateway/src/server.js startChromium), and this flag makes
       // the plugin attach to that endpoint. ensureBrowserAvailable short-circuits on a
       // reachable HTTP endpoint BEFORE the launch path (…availability.ts:186-194), so the
       // 8s window never runs and Chromium may take as long as it needs to boot.
@@ -464,8 +466,8 @@ export function buildGatewayConfigPatch(
   // The backend's inbound handler (internal-routines.routes.ts) checks that bearer
   // against its own `ROUTINE_WEBHOOK_SECRET`. The two values MUST be identical, so we
   // provision the gateway-side token from the SAME backend env var here — every place
-  // that applies this patch (the managed deploy, pre-warm pool, gateway routes, and
-  // fleet config-patch pipelines) keeps each gateway's token in lockstep with the
+  // that applies this patch (deploy.service.ts, pool.service.ts, gateway.routes.ts,
+  // patch-config-all-gateways.ts) keeps each gateway's token in lockstep with the
   // backend secret. Omitted when unset so we never push an empty token (the backend
   // fails closed on an unset secret anyway, so an empty gateway token would only 401).
   const webhookToken = process.env.ROUTINE_WEBHOOK_SECRET;

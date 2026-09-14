@@ -1,0 +1,4 @@
+// RemMac Release Configuration
+// Note: $() is an xcconfig trick to produce a literal "//"
+
+API_BASE_URL = https:/$()/backend-production-7d876.up.railway.app

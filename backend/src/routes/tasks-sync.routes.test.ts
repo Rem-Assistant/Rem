@@ -11,8 +11,14 @@ const poolMock = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(async () => clientMock),
 }));
+const taskConversationPoolMock = vi.hoisted(() => ({
+  connect: vi.fn(async () => clientMock),
+}));
 
-vi.mock('../db/pool.js', () => ({ pool: poolMock }));
+vi.mock('../db/pool.js', () => ({
+  pool: poolMock,
+  taskConversationPool: taskConversationPoolMock,
+}));
 vi.mock('../middleware/auth.js', () => ({
   requireJwt: (req: express.Request & { userId?: string }, _res: express.Response, next: express.NextFunction) => {
     req.userId = 'f8679a96-0000-4000-8000-000000000001';
@@ -37,6 +43,7 @@ describe('task sync tombstones', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     poolMock.connect.mockResolvedValue(clientMock);
+    taskConversationPoolMock.connect.mockResolvedValue(clientMock);
   });
 
   it('lists only the authenticated user deletion tombstones', async () => {
@@ -53,7 +60,7 @@ describe('task sync tombstones', () => {
     expect(poolMock.query.mock.calls[0][1]).toEqual([USER_ID]);
   });
 
-  it('records a tombstone in the same transaction as deletion', async () => {
+  it('records a tombstone and purges task-derived runtime evidence in the same transaction', async () => {
     clientMock.query.mockResolvedValue({ rows: [] });
 
     const response = await request(testApp()).delete(`/api/v1/tasks/${TASK_ID}`);
@@ -62,13 +69,19 @@ describe('task sync tombstones', () => {
     expect(clientMock.query.mock.calls.map((call) => call[0])).toEqual([
       'BEGIN',
       expect.stringContaining('pg_advisory_xact_lock'),
+      expect.stringContaining('pg_advisory_xact_lock'),
       expect.stringContaining('DELETE FROM tasks'),
+      expect.stringContaining('DELETE FROM rem_agent_runs'),
       expect.stringContaining('INSERT INTO task_deletions'),
       'COMMIT',
     ]);
-    expect(clientMock.query.mock.calls[1][1]).toEqual([USER_ID, TASK_ID]);
-    expect(clientMock.query.mock.calls[2][1]).toEqual([TASK_ID, USER_ID]);
-    expect(clientMock.query.mock.calls[3][1]).toEqual([USER_ID, TASK_ID]);
+    expect(clientMock.query.mock.calls[1][1]).toEqual([`task-chat:${USER_ID}:${TASK_ID}`]);
+    expect(clientMock.query.mock.calls[2][1]).toEqual([USER_ID, TASK_ID]);
+    expect(clientMock.query.mock.calls[3][1]).toEqual([TASK_ID, USER_ID]);
+    expect(clientMock.query.mock.calls[4][1]).toEqual([USER_ID, `rem-task-${TASK_ID}`]);
+    expect(clientMock.query.mock.calls[5][1]).toEqual([USER_ID, TASK_ID]);
+    expect(taskConversationPoolMock.connect).toHaveBeenCalledOnce();
+    expect(poolMock.connect).not.toHaveBeenCalled();
     expect(clientMock.release).toHaveBeenCalledOnce();
   });
 
@@ -78,14 +91,23 @@ describe('task sync tombstones', () => {
     const response = await request(testApp()).delete(`/api/v1/tasks/${MIXED_CASE_TASK_ID}`);
 
     expect(response.status).toBe(204);
-    expect(clientMock.query.mock.calls[1][0]).toContain(
+    expect(clientMock.query.mock.calls[2][0]).toContain(
       "hashtextextended($1::uuid::text || ':' || $2::uuid::text, 0)",
     );
-    expect(clientMock.query.mock.calls[1][1]).toEqual([USER_ID, MIXED_CASE_TASK_ID]);
+    expect(clientMock.query.mock.calls[1][1]).toEqual([
+      `task-chat:${USER_ID}:${MIXED_CASE_TASK_ID.toLowerCase()}`,
+    ]);
+    expect(clientMock.query.mock.calls[2][1]).toEqual([USER_ID, MIXED_CASE_TASK_ID]);
+    expect(clientMock.query.mock.calls[4][1]).toEqual([
+      USER_ID,
+      `rem-task-${MIXED_CASE_TASK_ID.toLowerCase()}`,
+    ]);
   });
 
   it('rolls back when tombstone persistence fails', async () => {
     clientMock.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })

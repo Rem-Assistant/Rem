@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawKit
+import RemKit
 
 /// Compatibility policy for gateways that predate enriched `sessions.list`
 /// parameters. Only a structured schema rejection warrants a second request;

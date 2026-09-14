@@ -295,6 +295,38 @@ private extension View {
     }
 }
 
+/// Positive scheme allowlist for the tappable links `AssistantMarkdownView` renders.
+///
+/// `MarkdownInlineImageView` already scheme-allowlists inline *image* URLs (decode local
+/// `data:`, otherwise require `http`/`https` — see `body`, ~line 498). Text links never got
+/// the same treatment, so an assistant- or tool-authored `[label](remclaw://connect?url=…&token=…)`
+/// rendered as a link visually identical to `https` and, on tap, dispatched through SwiftUI's
+/// `openURL` straight into the app's own `onOpenURL` — silently repointing the gateway (#1342,
+/// exploit measured in #1341).
+///
+/// The dividing line is **external-app handoff vs internal handler**, not `http(s)` vs everything.
+/// `mailto:`/`tel:` leave our process and land in an app with its own confirmation UI (a compose
+/// window, a dial prompt), so an assistant summarizing an email may safely offer them. `remclaw://`
+/// reaches an unconfirmed handler *inside our own app* with no such step. Permit exactly the four
+/// handoff schemes; reject every other scheme.
+///
+/// It **must** be a positive allowlist. Foundation's markdown parser attaches a `.link` to whatever
+/// scheme it is handed — `javascript:` and unregistered custom schemes included — so a denylist
+/// fails open on every scheme nobody thought to enumerate, while an allowlist fails closed. See the
+/// probe and the priced rationale in `docs/product/SOURCE-TAXONOMY.md`.
+enum AssistantMarkdownLinkPolicy {
+    /// External-app-handoff schemes: they leave this process for an app that has its own
+    /// user-facing confirmation. Everything else — including this app's own `remclaw://` — is refused.
+    static let allowedSchemes: Set<String> = ["http", "https", "mailto", "tel"]
+
+    /// Whether a tapped link may be dispatched to the system's `openURL`. Fail-closed on a
+    /// missing scheme; case-insensitive so `HTTPS:`/`MailTo:` are treated like their lowercase forms.
+    static func allowsDispatch(to url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return allowedSchemes.contains(scheme)
+    }
+}
+
 struct AssistantMarkdownView: View {
     enum Tone {
         case primary
@@ -346,6 +378,15 @@ struct AssistantMarkdownView: View {
             }
         )
         .onPreferenceChange(ContentWidthKey.self) { contentWidth = $0 }
+        // Gate every tappable link this subtree renders (prose runs AND table cells) through a
+        // positive scheme allowlist BEFORE it can reach the system's `openURL`. SwiftUI's `Text`
+        // linkifies any scheme the markdown parser produces, so without this an assistant/tool
+        // `[label](remclaw://connect?url=…&token=…)` dispatched into the app's own `onOpenURL`
+        // and silently repointed the gateway (#1342/#1341). Allowed handoff schemes fall through
+        // to the system (`.systemAction` → Safari/Mail/dialer); everything else is discarded.
+        .environment(\.openURL, OpenURLAction { url in
+            AssistantMarkdownLinkPolicy.allowsDispatch(to: url) ? .systemAction : .discarded
+        })
     }
 
     /// Renders a parsed GFM table as a real 1px-gridded table with a shaded header row.

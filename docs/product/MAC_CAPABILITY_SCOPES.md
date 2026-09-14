@@ -1,7 +1,7 @@
 # Mac Capability Scopes And Action Logs
 
 This note is the product/security decision for issue
-[#583](https://github.com/Rem-Assistant/RemClaw/issues/583). It extends
+[#583](https://github.com/Rem-Assistant/Rem/issues/583). It extends
 [SECURITY_MODEL.md](SECURITY_MODEL.md) for Mac-local powers: shell, files,
 clipboard, screen/app context, browser automation, and gateway configuration.
 

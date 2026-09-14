@@ -27,7 +27,7 @@ public extension MemoryProviding {
 
 // MARK: - Concrete (backend REST)
 
-/// Talks to the RemClaw Express backend memory endpoints. Reuses the app's existing
+/// Talks to the Rem Express backend memory endpoints. Reuses the app's existing
 /// authenticated HTTP client for base-URL + JWT + 401-refresh, exactly like
 /// `TaskCommentService` — the same `#if os(iOS)` split, no new auth path:
 /// - iOS:   `AuthenticatedHttpClient.request(...)`

@@ -1,8 +1,8 @@
 import Foundation
 import SwiftUI
-import OpenClawChatUI
-import OpenClawKit
-import OpenClawProtocol
+import RemChatUI
+import RemKit
+import RemProtocol
 
 #if DEBUG
 /// Deterministic, auth-free runtime proof for #1141.
@@ -11,14 +11,14 @@ import OpenClawProtocol
 /// sending creates an in-flight run, then a live `agent/tool` browser event arrives before the
 /// browser call exists in persisted history. The real `SharedRemChatView` must show its pinned card.
 struct BrowserLiveCardFixtureView: View {
-    @State private var viewModel: OpenClawChatViewModel
+    @State private var viewModel: RemChatViewModel
     @State private var browserSession: BrowserLiveSession
     @State private var didSend = false
 
     init() {
         let browserSession = BrowserLiveSession(makeTransport: { nil })
         let transport = BrowserLiveCardFixtureTransport(browserSession: browserSession)
-        self._viewModel = State(initialValue: OpenClawChatViewModel(
+        self._viewModel = State(initialValue: RemChatViewModel(
             sessionKey: BrowserLiveCardFixtureTransport.sessionKey,
             transport: transport,
             initialThinkingLevel: "low"))
@@ -42,18 +42,18 @@ struct BrowserLiveCardFixtureView: View {
     }
 }
 
-private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, OpenClawChatTransport {
+private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, RemChatTransport {
     static let sessionKey = "fixture-live-browser-card"
     private let continuationLock = NSLock()
-    private var eventContinuation: AsyncStream<OpenClawChatTransportEvent>.Continuation?
+    private var eventContinuation: AsyncStream<RemChatTransportEvent>.Continuation?
     private weak var browserSession: BrowserLiveSession?
 
     init(browserSession: BrowserLiveSession) {
         self.browserSession = browserSession
     }
 
-    func requestHistory(sessionKey: String) async throws -> OpenClawChatHistoryPayload {
-        try Self.decode(OpenClawChatHistoryPayload.self, from: [
+    func requestHistory(sessionKey: String) async throws -> RemChatHistoryPayload {
+        try Self.decode(RemChatHistoryPayload.self, from: [
             "sessionKey": sessionKey,
             "sessionId": "fixture-browser-session-id",
             "thinkingLevel": "low",
@@ -66,8 +66,8 @@ private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, OpenCl
         message _: String,
         thinking _: String,
         idempotencyKey: String,
-        attachments _: [OpenClawChatAttachmentPayload]
-    ) async throws -> OpenClawChatSendResponse {
+        attachments _: [RemChatAttachmentPayload]
+    ) async throws -> RemChatSendResponse {
         await browserSession?.beginBrowserRun(for: Self.sessionKey)
         await browserSession?.recordBrowserToolActivity(BrowserToolActivity(
             sessionKey: Self.sessionKey,
@@ -75,7 +75,7 @@ private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, OpenCl
             toolCallID: "fixture-browser-tabs",
             toolName: "browser",
             action: "tabs"))
-        let startEvent = try Self.decode(OpenClawAgentEventPayload.self, from: [
+        let startEvent = try Self.decode(RemAgentEventPayload.self, from: [
             "runId": "fixture-browser-session-id",
             "seq": 1,
             "stream": "tool",
@@ -87,7 +87,7 @@ private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, OpenCl
                 "args": ["action": "tabs"],
             ],
         ])
-        let resultEvent = try Self.decode(OpenClawAgentEventPayload.self, from: [
+        let resultEvent = try Self.decode(RemAgentEventPayload.self, from: [
             "runId": "fixture-browser-session-id",
             "seq": 2,
             "stream": "tool",
@@ -104,13 +104,13 @@ private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, OpenCl
         let continuation = continuationLock.withLock { eventContinuation }
         continuation?.yield(.agent(startEvent))
         continuation?.yield(.agent(resultEvent))
-        return try Self.decode(OpenClawChatSendResponse.self, from: [
+        return try Self.decode(RemChatSendResponse.self, from: [
             "runId": idempotencyKey,
             "status": "started",
         ])
     }
 
-    func events() -> AsyncStream<OpenClawChatTransportEvent> {
+    func events() -> AsyncStream<RemChatTransportEvent> {
         AsyncStream { continuation in
             continuationLock.withLock { eventContinuation = continuation }
         }
@@ -118,13 +118,13 @@ private final class BrowserLiveCardFixtureTransport: @unchecked Sendable, OpenCl
 
     func requestHealth(timeoutMs _: Int) async throws -> Bool { true }
     func abortRun(sessionKey _: String, runId _: String) async throws {}
-    func listModels() async throws -> [OpenClawChatModelChoice] { [] }
-    func listSessions(limit _: Int?) async throws -> OpenClawChatSessionsListResponse {
-        OpenClawChatSessionsListResponse(
+    func listModels() async throws -> [RemChatModelChoice] { [] }
+    func listSessions(limit _: Int?) async throws -> RemChatSessionsListResponse {
+        RemChatSessionsListResponse(
             ts: Date().timeIntervalSince1970 * 1000,
             path: nil,
             count: 0,
-            defaults: OpenClawChatSessionsDefaults(
+            defaults: RemChatSessionsDefaults(
                 model: nil,
                 contextTokens: nil,
                 thinkingLevels: nil,

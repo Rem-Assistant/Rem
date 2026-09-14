@@ -38,8 +38,8 @@ const gatewayUserContextMock = vi.hoisted(() => ({
   syncUserTimezoneToGateway: vi.fn(),
 }));
 
-const entitlementProviderMock = vi.hoisted(() => ({
-  getCanonicalEntitlement: vi.fn(),
+const iapIdentityServiceMock = vi.hoisted(() => ({
+  getCanonicalEntitlementWithClient: vi.fn(),
 }));
 
 const gatewayPairServiceMock = vi.hoisted(() => ({
@@ -92,16 +92,12 @@ vi.mock('../middleware/auth.js', () => ({
 }));
 
 vi.mock('../services/gateway.service.js', () => gatewayServiceMock);
-vi.mock('../services/gateway/hosted-provisioning.js', () => ({
-  getHostedGatewayProvisioning: () => flyServiceMock,
-}));
+vi.mock('../services/fly.service.js', () => flyServiceMock);
 vi.mock('../services/gateway-pair.service.js', () => gatewayPairServiceMock);
 vi.mock('../services/composio.service.js', () => composioServiceMock);
 vi.mock('../services/gateway-user-context.service.js', () => gatewayUserContextMock);
 vi.mock('../services/gateway-lifecycle-lock.service.js', () => lifecycleLockMock);
-vi.mock('../services/entitlement/entitlement-provider.js', () => ({
-  getEntitlementProvider: () => entitlementProviderMock,
-}));
+vi.mock('../services/iap/iap-identity.service.js', () => iapIdentityServiceMock);
 
 const gatewayRoutes = (await import('./gateway.routes.js')).default;
 
@@ -119,21 +115,21 @@ describe('gateway routes', () => {
     process.env.MANAGED_TALK_FENCED_WRITER_ROLLOUT_COMPLETE = 'true';
     process.env.BACKEND_PUBLIC_URL = 'https://api.remclaw.test';
     gatewayServiceMock.getGatewayCredentials.mockResolvedValue({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
     });
     gatewayServiceMock.getSetupPassword.mockResolvedValue('setup-password');
     gatewayServiceMock.getFlyDeploymentMetadata.mockResolvedValue({
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
     });
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValue({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: null,
@@ -148,7 +144,7 @@ describe('gateway routes', () => {
     gatewayServiceMock.markManagedTalkReconciledWithClient.mockResolvedValue(undefined);
     flyServiceMock.getMachine.mockResolvedValue({
       id: 'machine-id',
-      name: 'remclaw-00000000',
+      name: 'remclaw-f8679a968c6a',
       state: 'started',
       region: 'iad',
       config: {
@@ -166,7 +162,7 @@ describe('gateway routes', () => {
       machineState: 'started',
       gatewayReady: true,
     });
-    entitlementProviderMock.getCanonicalEntitlement.mockResolvedValue({
+    iapIdentityServiceMock.getCanonicalEntitlementWithClient.mockResolvedValue({
       plan: 'pro',
       isActive: true,
       status: 'active',
@@ -256,12 +252,12 @@ describe('gateway routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ outcome: 'repaired' });
-      expect(entitlementProviderMock.getCanonicalEntitlement).toHaveBeenCalledWith(
+      expect(iapIdentityServiceMock.getCanonicalEntitlementWithClient).toHaveBeenCalledWith(
         lifecycleLockMock.lifecycleClient,
         'f8679a96-0000-4000-8000-000000000001',
       );
       expect(gatewayPairServiceMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'gateway-token',
         expect.objectContaining({
           talk: expect.objectContaining({ provider: 'elevenlabs' }),
@@ -272,7 +268,7 @@ describe('gateway routes', () => {
     });
 
     it('revokes the exact Rem-managed provider key when entitlement is inactive', async () => {
-      entitlementProviderMock.getCanonicalEntitlement.mockResolvedValueOnce({
+      iapIdentityServiceMock.getCanonicalEntitlementWithClient.mockResolvedValueOnce({
         plan: 'free',
         isActive: false,
         status: 'none',
@@ -288,7 +284,7 @@ describe('gateway routes', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ outcome: 'subscription_required' });
       expect(gatewayPairServiceMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'gateway-token',
         { talk: { providers: { elevenlabs: { apiKey: null } } } },
         'setup-password',
@@ -304,10 +300,10 @@ describe('gateway routes', () => {
       const oldFingerprint = crypto.createHash('sha256').update(oldKey).digest('hex');
       const currentFingerprint = crypto.createHash('sha256').update('test-elevenlabs-key').digest('hex');
       gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValue({
-        gateway_url: 'https://remclaw-00000000.fly.dev',
+        gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
         gateway_token: 'gateway-token',
         hosting_provider: 'fly',
-        fly_app_name: 'remclaw-00000000',
+        fly_app_name: 'remclaw-f8679a968c6a',
         fly_machine_id: 'machine-id',
         fly_volume_id: 'volume-id',
         managed_talk_credential_fingerprint: oldFingerprint,
@@ -325,7 +321,7 @@ describe('gateway routes', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ outcome: 'repaired' });
       expect(gatewayPairServiceMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'gateway-token',
         { talk: { providers: { elevenlabs: { apiKey: 'test-elevenlabs-key' } } } },
         'setup-password',
@@ -340,15 +336,15 @@ describe('gateway routes', () => {
     });
 
     it('preserves a user-owned replacement key and relinquishes stale managed ownership', async () => {
-      entitlementProviderMock.getCanonicalEntitlement.mockResolvedValueOnce({
+      iapIdentityServiceMock.getCanonicalEntitlementWithClient.mockResolvedValueOnce({
         plan: 'free', isActive: false, status: 'none', productId: null, expiresAt: null,
         originalTransactionId: null, environment: null, updatedAt: null,
       });
       gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValue({
-        gateway_url: 'https://remclaw-00000000.fly.dev',
+        gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
         gateway_token: 'gateway-token',
         hosting_provider: 'fly',
-        fly_app_name: 'remclaw-00000000',
+        fly_app_name: 'remclaw-f8679a968c6a',
         fly_machine_id: 'machine-id',
         fly_volume_id: 'volume-id',
         managed_talk_credential_fingerprint: crypto.createHash('sha256').update('old-managed-key').digest('hex'),
@@ -388,7 +384,7 @@ describe('gateway routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ outcome: 'user_credentials_required' });
-      expect(entitlementProviderMock.getCanonicalEntitlement).not.toHaveBeenCalled();
+      expect(iapIdentityServiceMock.getCanonicalEntitlementWithClient).not.toHaveBeenCalled();
       expect(gatewayPairServiceMock.patchGatewayConfigHttp).not.toHaveBeenCalled();
     });
 
@@ -412,7 +408,7 @@ describe('gateway routes', () => {
         gateway_url: 'https://attacker.example',
         gateway_token: 'gateway-token',
         hosting_provider: 'fly',
-        fly_app_name: 'remclaw-00000000',
+        fly_app_name: 'remclaw-f8679a968c6a',
         fly_machine_id: 'machine-id',
         fly_volume_id: 'volume-id',
         managed_talk_credential_fingerprint: null,
@@ -430,7 +426,7 @@ describe('gateway routes', () => {
     it('rejects a Fly machine owned by another backend environment before provider access', async () => {
       flyServiceMock.getMachine.mockResolvedValueOnce({
         id: 'machine-id',
-        name: 'remclaw-00000000',
+        name: 'remclaw-f8679a968c6a',
         state: 'started',
         region: 'iad',
         config: {
@@ -455,7 +451,7 @@ describe('gateway routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
-      gatewayUrl: 'https://remclaw-00000000.fly.dev',
+      gatewayUrl: 'https://remclaw-f8679a968c6a.fly.dev',
       gatewayToken: 'gateway-token',
       hostingProvider: 'fly',
     });
@@ -473,7 +469,7 @@ describe('gateway routes', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ ok: true, activated: true });
     expect(gatewayPairServiceMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       { browser: { ssrfPolicy: { hostnameAllowlist: ['discord.com'] } } },
       'setup-password',
@@ -496,7 +492,7 @@ describe('gateway routes', () => {
 
   it('starts timezone reconciliation without delaying newly saved gateway credentials', async () => {
     gatewayServiceMock.setUserEnteredGatewayForUserWithClient.mockResolvedValue({
-      url: 'https://remclaw-00000000.fly.dev',
+      url: 'https://remclaw-f8679a968c6a.fly.dev',
       hostingProvider: 'manual',
       isConnected: true,
     });
@@ -508,7 +504,7 @@ describe('gateway routes', () => {
     const response = await request(testApp())
       .patch('/api/v1/me/gateway')
       .send({
-        gatewayUrl: 'https://remclaw-00000000.fly.dev',
+        gatewayUrl: 'https://remclaw-f8679a968c6a.fly.dev',
         gatewayToken: 'gateway-token',
         hostingProvider: 'fly',
       });
@@ -522,7 +518,7 @@ describe('gateway routes', () => {
     expect(gatewayServiceMock.setUserEnteredGatewayForUserWithClient).toHaveBeenCalledWith(
       lifecycleLockMock.lifecycleClient,
       'f8679a96-0000-4000-8000-000000000001',
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       'fly',
     );
@@ -539,8 +535,8 @@ describe('gateway routes', () => {
       canUpdate: false,
       status: 'managed_fly_preflight_required',
       hostingProvider: 'fly',
-      gatewayUrl: 'https://remclaw-00000000.fly.dev',
-      managedFlyAppName: 'remclaw-00000000',
+      gatewayUrl: 'https://remclaw-f8679a968c6a.fly.dev',
+      managedFlyAppName: 'remclaw-f8679a968c6a',
       message: 'Gateway updates require a tested backup, same-gateway deploy target, health check, and rollback path before they can be enabled.',
       requiredChecks: ['same_gateway_target'],
       preflightChecks: [
@@ -548,7 +544,7 @@ describe('gateway routes', () => {
           id: 'same_gateway_target',
           label: 'Same Gateway Target',
           status: 'ready',
-          message: 'Managed Fly app remclaw-00000000 is known.',
+          message: 'Managed Fly app remclaw-f8679a968c6a is known.',
         },
       ],
       approvedTargets: [
@@ -573,7 +569,7 @@ describe('gateway routes', () => {
       canUpdate: false,
       status: 'managed_fly_preflight_required',
       hostingProvider: 'fly',
-      managedFlyAppName: 'remclaw-00000000',
+      managedFlyAppName: 'remclaw-f8679a968c6a',
       preflightChecks: [
         {
           id: 'same_gateway_target',
@@ -598,7 +594,7 @@ describe('gateway routes', () => {
 
     expect(response.status).toBe(200);
     expect(gatewayPairServiceMock.autoApproveDevicesHttp).toHaveBeenCalledWith(
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       'setup-password',
       30_000,
@@ -626,7 +622,7 @@ describe('gateway routes', () => {
 
     expect(response.status).toBe(200);
     expect(gatewayPairServiceMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       expect.objectContaining({
         gateway: expect.objectContaining({
@@ -741,7 +737,7 @@ describe('gateway routes', () => {
 
       expect(response.status).toBe(200);
       expect(gatewayPairServiceMock.listWorkspaceFilesHttp).toHaveBeenCalledWith(
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'setup-password'
       );
       expect(response.body).toMatchObject({
@@ -805,7 +801,7 @@ describe('gateway routes', () => {
 
       expect(response.status).toBe(200);
       expect(gatewayPairServiceMock.readWorkspaceFileHttp).toHaveBeenCalledWith(
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'setup-password',
         'USER.md'
       );
@@ -853,7 +849,7 @@ describe('gateway routes', () => {
       );
       expect(composioServiceMock.ensureComposioMcpWired).toHaveBeenCalledWith(
         'f8679a96-0000-4000-8000-000000000001',
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'gateway-token',
         'setup-password',
       );
@@ -883,7 +879,7 @@ describe('gateway routes', () => {
       expect(response.status).toBe(200);
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(gatewayPairServiceMock.patchGatewayConfig).toHaveBeenCalledWith(
-        'https://remclaw-00000000.fly.dev',
+        'https://remclaw-f8679a968c6a.fly.dev',
         'gateway-token',
         expect.objectContaining({
           talk: expect.objectContaining({ provider: 'elevenlabs' }),

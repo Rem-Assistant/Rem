@@ -15,26 +15,25 @@ const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
 
 /**
- * `gatewayRelevanceCompletion` is the ONE part of this service that touches a gateway, and the only
- * place the triage session is created and cleaned up. It reaches the gateway through a dynamic
- * `import('./gateway-agent.service.js')`, so mocking the module is enough — no socket, no wake.
+ * The default completion reaches the Rem-owned runtime through a dynamic import. Mocking that
+ * module keeps this suite pure while pinning the exact authority and tool policy.
  */
-const gatewayAgentMock = vi.hoisted(() => ({
-  runAgentTurnOnGateway: vi.fn(),
-  deleteSessionOnGateway: vi.fn(),
+const sharedRuntimeMock = vi.hoisted(() => ({
+  runAgentTurnOnSharedRuntime: vi.fn(),
 }));
-vi.mock('./gateway-agent.service.js', () => gatewayAgentMock);
+vi.mock('../runtime/agent-runtime.service.js', () => sharedRuntimeMock);
 
 import {
   EMPTY_TASK_CONTEXT,
   buildRelevancePrompt,
   clampText,
-  gatewayRelevanceCompletion,
+  remRuntimeRelevanceCompletion,
   hasTaskContext,
   judgeSignals,
   loadTaskContext,
   parseRelevanceVerdicts,
-  relevanceSessionKey,
+  relevanceSemanticFingerprint,
+  relevanceIdempotencyKey,
   runRelevancePassForUser,
   SIGNAL_RELEVANCE_BOUNDS,
   SIGNAL_RELEVANCE_POLICY,
@@ -43,6 +42,7 @@ import {
   type RelevanceCompletionResult,
   type ScheduleItem,
   type SchedulingContext,
+  type SignalAggregationEffects,
   type UserTaskContext,
 } from './signal-relevance.service.js';
 
@@ -64,13 +64,14 @@ function scripted(text: string): RelevanceCompletion & { prompts: string[] } {
   };
 }
 
-function failing(reason: 'no_gateway' | 'wake_failed' | 'timeout' | 'error'): RelevanceCompletion {
+function failing(reason: 'unavailable' | 'startup_failed' | 'timeout' | 'error'): RelevanceCompletion {
   return { async complete() { return { ok: false, reason }; } };
 }
 
 const CONTEXT: UserTaskContext = {
   tasks: [
     {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       title: 'File visa paperwork',
       status: 'pending',
       priority: 'medium',
@@ -191,6 +192,19 @@ describe('parsing is strict, and lossy only in the direction that surfaces rows'
     expect(parseRelevanceVerdicts('{"i":1,"v":"drop"}', signals)).toEqual([]);
   });
 
+  it('rotates a terminal but unparseable completion instead of replaying it forever', async () => {
+    await expect(judgeSignals(
+      USER,
+      signals,
+      CONTEXT,
+      scripted('I could not decide.'),
+    )).resolves.toMatchObject({
+      verdicts: [],
+      unavailableReason: 'unparseable',
+      rotateAttempt: true,
+    });
+  });
+
   it('refuses an "act" with no usable title rather than falling back to the template', () => {
     // This is the founder's defect expressed as a parse rule: if the judge cannot name an outcome,
     // it has not decided anything, and an undecided row surfaces UNJUDGED instead of being
@@ -276,10 +290,10 @@ describe('a verdict must prove which row it is about', () => {
   });
 });
 
-describe('a gateway failure surfaces signals unjudged, never drops them', () => {
+describe('a runtime failure surfaces signals unjudged, never drops them', () => {
   const signals = [signal('a', 'Ada', 'one')];
 
-  it.each(['no_gateway', 'wake_failed', 'timeout', 'error'] as const)(
+  it.each(['unavailable', 'startup_failed', 'timeout', 'error'] as const)(
     'reports %s structurally and writes no verdict',
     async (reason) => {
       const result = await judgeSignals(USER, signals, CONTEXT, failing(reason));
@@ -318,13 +332,17 @@ describe('runRelevancePassForUser', () => {
     return {
       updates,
       async query(text: string, params: unknown[] = []) {
-        if (text.includes('FROM channel_signals')) return { rows: rowsBySql.signals, rowCount: 0 };
+        if (text.includes('RETURNING cs.id, cs.source')) {
+          return { rows: rowsBySql.signals, rowCount: rowsBySql.signals.length };
+        }
         if (text.includes('FROM tasks')) return { rows: rowsBySql.tasks ?? [], rowCount: 0 };
         if (text.includes('FROM lists')) return { rows: rowsBySql.lists ?? [], rowCount: 0 };
-        if (text.includes('UPDATE channel_signals')) {
+        if (text.includes('RETURNING (v.id IS NOT NULL) AS stored')) {
           updates.push(params);
-          return { rows: [], rowCount: 1 };
+          const payload = JSON.parse(String(params[1])) as unknown[];
+          return { rows: payload.map(() => ({ stored: true })), rowCount: payload.length };
         }
+        if (text.includes('relevance_attempt_id = NULL')) return { rows: [], rowCount: 1 };
         return { rows: [], rowCount: 0 };
       },
     };
@@ -340,16 +358,29 @@ describe('runRelevancePassForUser', () => {
       scripted('[{"i":1,"s":"Deploybot","v":"drop"}]'),
     );
     expect(counters).toMatchObject({ considered: 1, act: 0, drop: 1, unjudged: 0 });
-    // The trailing NULL is `relevance_start_at` (migration 122): a 'drop' proposes no time, and
-    // the column is written UNCONDITIONALLY so a re-judge clears a time it no longer stands behind.
-    expect(fake.updates[0]).toEqual(['a', USER, 'drop', null, SIGNAL_RELEVANCE_POLICY, null]);
+    // The trailing NULLs are `relevance_start_at` (migration 122) and `relevance_parent_task_id`
+    // (migration 123): a 'drop' proposes no time and has no parent, and both columns are written
+    // UNCONDITIONALLY so a re-judge clears values it no longer stands behind.
+    expect(fake.updates[0]).toEqual([
+      USER,
+      JSON.stringify([{
+        id: 'a',
+        decision: 'drop',
+        title: null,
+        start_at: null,
+        parent_task_id: null,
+      }]),
+      SIGNAL_RELEVANCE_POLICY,
+      null,
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+    ]);
   });
 
-  it('leaves the row untouched and counts it unjudged when the gateway is unreachable', async () => {
+  it('leaves the row untouched and counts it unjudged when the runtime is unavailable', async () => {
     const fake = db({ signals: [row] });
-    const counters = await runRelevancePassForUser(USER, fake as never, failing('wake_failed'));
+    const counters = await runRelevancePassForUser(USER, fake as never, failing('startup_failed'));
     expect(counters).toMatchObject({ considered: 1, act: 0, drop: 0, unjudged: 1 });
-    expect(counters.unavailableReason).toBe('wake_failed');
+    expect(counters.unavailableReason).toBe('startup_failed');
     // NOTHING was written. The row keeps relevance_decision = NULL, and NULL surfaces.
     expect(fake.updates).toEqual([]);
   });
@@ -391,12 +422,28 @@ describe('loadTaskContext', () => {
     expect(seen[0]).toContain(`LIMIT $2`);
   });
 
+  it('excludes calendar events from parent candidates (only real tasks aggregate)', async () => {
+    // A synced calendar event (type='calendar_event') is pending forever and must not appear as a
+    // [P#] parent — a `complete` matched to one would suppress the signal while the write no-ops,
+    // because the writers refuse any `type <> 'task'` parent. The candidate query mirrors that guard.
+    const seen: string[] = [];
+    const fake = {
+      async query(text: string) {
+        seen.push(text);
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    await loadTaskContext(USER, fake as never);
+    expect(seen[0]).toContain("t.type = 'task'");
+  });
+
   it('renders the filing the user chose: folder › list, and the due date', async () => {
     const fake = {
       async query(text: string) {
         if (text.includes('FROM tasks')) {
           return {
             rows: [{
+              id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
               title: 'File visa paperwork',
               status: 'in_progress',
               priority: 'high',
@@ -433,108 +480,115 @@ describe('bounds and hygiene', () => {
     expect(items).toHaveLength(SIGNAL_RELEVANCE_BOUNDS.maxItemsPerRun);
   });
 
-  it('mints a fresh session key per run', () => {
-    expect(relevanceSessionKey()).not.toBe(relevanceSessionKey());
-    expect(relevanceSessionKey().startsWith('rem-signal-triage-')).toBe(true);
+  it('derives a stable tenant-bound identity from the exact evidence', () => {
+    const first = relevanceIdempotencyKey(USER, 'prompt-a');
+    expect(relevanceIdempotencyKey(USER, 'prompt-a')).toBe(first);
+    expect(relevanceIdempotencyKey(USER, 'prompt-b')).not.toBe(first);
+    expect(relevanceIdempotencyKey('22222222-2222-4222-8222-222222222222', 'prompt-a'))
+      .not.toBe(first);
   });
 });
 
-/**
- * The leak these cover, measured on remclaw-00000000 before the fix: `sessions.list` returned 24
- * `agent:main:rem-signal-triage-<uuid>` conversations, every one `hiddenByApp=NO` — openable in the
- * user's chat list, each holding their open task titles and every sender and subject in that
- * tick's batch. A fresh key per run was the CAUSE, not the mitigation: `chat.send` persists, so one
- * new durable session appeared per ingest tick.
- *
- * Asserting "delete was called" is not enough — that would pass if we deleted the wrong key, or a
- * newly minted one. These assert the deleted key is the SAME key the turn ran under.
- */
-describe('triage sessions do not accumulate on the gateway', () => {
-  beforeEach(() => {
-    gatewayAgentMock.runAgentTurnOnGateway.mockReset();
-    gatewayAgentMock.deleteSessionOnGateway.mockReset();
-    gatewayAgentMock.deleteSessionOnGateway.mockResolvedValue(true);
-  });
+describe('signal triage uses the Rem-owned tool-free runtime', () => {
+  beforeEach(() => sharedRuntimeMock.runAgentTurnOnSharedRuntime.mockReset());
 
-  it('deletes the exact session the turn ran under', async () => {
-    gatewayAgentMock.runAgentTurnOnGateway.mockResolvedValue({ ok: true, text: '[]' });
+  it('admits only an attributed observe turn with no tools', async () => {
+    sharedRuntimeMock.runAgentTurnOnSharedRuntime.mockResolvedValue({ ok: true, text: '[]' });
 
-    const result = await gatewayRelevanceCompletion.complete(USER, 'prompt');
+    const result = await remRuntimeRelevanceCompletion.complete(USER, 'prompt');
 
     expect(result).toEqual({ ok: true, text: '[]' });
-    const ranUnder = gatewayAgentMock.runAgentTurnOnGateway.mock.calls[0][0].sessionKey;
-    const deleted = gatewayAgentMock.deleteSessionOnGateway.mock.calls[0][0].sessionKey;
-    expect(ranUnder).toMatch(/^rem-signal-triage-/);
-    // Correlation, not just "something was deleted".
-    expect(deleted).toBe(ranUnder);
-  });
-
-  it('still deletes when the turn FAILS — a timed-out turn created the session too', async () => {
-    gatewayAgentMock.runAgentTurnOnGateway.mockResolvedValue({ ok: false, reason: 'timeout' });
-
-    const result = await gatewayRelevanceCompletion.complete(USER, 'prompt');
-
-    expect(result).toEqual({ ok: false, reason: 'timeout' });
-    const ranUnder = gatewayAgentMock.runAgentTurnOnGateway.mock.calls[0][0].sessionKey;
-    expect(gatewayAgentMock.deleteSessionOnGateway.mock.calls[0][0].sessionKey).toBe(ranUnder);
-  });
-
-  it('still deletes when the turn THROWS, and lets the throw through', async () => {
-    gatewayAgentMock.runAgentTurnOnGateway.mockRejectedValue(new Error('socket died'));
-
-    await expect(gatewayRelevanceCompletion.complete(USER, 'prompt')).rejects.toThrow('socket died');
-    expect(gatewayAgentMock.deleteSessionOnGateway).toHaveBeenCalledTimes(1);
-  });
-
-  it('a failed cleanup does not turn a good classification into a failed one', async () => {
-    gatewayAgentMock.runAgentTurnOnGateway.mockResolvedValue({ ok: true, text: '[]' });
-    gatewayAgentMock.deleteSessionOnGateway.mockResolvedValue(false);
-
-    // The session is left behind (logged, and BackgroundSessionFilter hides it) — but the caller
-    // still gets its verdicts. Losing a real signal is worse than leaving a session to clean up.
-    await expect(gatewayRelevanceCompletion.complete(USER, 'prompt')).resolves.toEqual({
-      ok: true,
-      text: '[]',
+    expect(sharedRuntimeMock.runAgentTurnOnSharedRuntime).toHaveBeenCalledWith({
+      principal: { userId: USER, authority: 'trusted_automation' },
+      message: 'prompt',
+      sessionKey: 'rem-signal-relevance',
+      idempotencyKey: relevanceIdempotencyKey(USER, 'prompt'),
+      requestIdentity: relevanceIdempotencyKey(USER, 'prompt'),
+      timeoutMs: SIGNAL_RELEVANCE_BOUNDS.timeoutMs,
+      thinking: '',
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
     });
   });
 
-  it.each(['no_gateway', 'wake_failed'] as const)(
-    'does not attempt cleanup after %s — no session was ever created',
-    async (reason) => {
-      gatewayAgentMock.runAgentTurnOnGateway.mockResolvedValue({ ok: false, reason });
+  it.each([
+    'unavailable',
+    'startup_failed',
+    'quota_exhausted',
+    'credential_rejected',
+    'timeout',
+    'cancelled',
+    'error',
+  ] as const)('passes through the structured %s failure', async (reason) => {
+    sharedRuntimeMock.runAgentTurnOnSharedRuntime.mockResolvedValue({ ok: false, reason });
 
-      await gatewayRelevanceCompletion.complete(USER, 'prompt');
+    await expect(remRuntimeRelevanceCompletion.complete(USER, 'prompt')).resolves.toEqual({
+      ok: false,
+      reason,
+    });
+  });
 
-      // `runAgentTurnOnGateway` returns these BEFORE sending `chat.send`. Cleaning up anyway would
-      // open a socket, burn the timeout, and warn about a leak that cannot exist — every user
-      // without a gateway producing that line every 15 minutes, drowning real leaks in non-leaks.
-      // It would also resume a suspended Fly machine, since the socket alone auto-starts it.
-      expect(gatewayAgentMock.deleteSessionOnGateway).not.toHaveBeenCalled();
-    },
-  );
+  it('does not rotate a persisted attempt when payer admission is temporarily unknown', async () => {
+    sharedRuntimeMock.runAgentTurnOnSharedRuntime.mockResolvedValue({
+      ok: false,
+      reason: 'unavailable',
+      provenance: {
+        runtimeId: 'rem_shared',
+        persistenceKind: 'rem_runtime',
+        billingMode: 'unknown',
+      },
+    });
 
-  it.each(['timeout', 'error'] as const)(
-    'DOES clean up after %s — the turn got far enough to create the session',
-    async (reason) => {
-      gatewayAgentMock.runAgentTurnOnGateway.mockResolvedValue({ ok: false, reason });
+    await expect(judgeSignals(
+      USER,
+      [signal('a', 'Ada', 'one')],
+      CONTEXT,
+      remRuntimeRelevanceCompletion,
+    )).resolves.toMatchObject({
+      unavailableReason: 'unavailable',
+      rotateAttempt: false,
+    });
+  });
 
-      await gatewayRelevanceCompletion.complete(USER, 'prompt');
+  it('keeps a persisted batch identity when the rendered clock changes across retries', async () => {
+    const calls: Array<{ prompt: string; key?: string }> = [];
+    const completion: RelevanceCompletion = {
+      async complete(_userId, prompt, key) {
+        calls.push({ prompt, key });
+        return { ok: true, text: '[{"i":1,"s":"Ada","v":"drop"}]' };
+      },
+    };
+    const signals = [{ ...signal('a', 'Ada', 'one'), attemptId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }];
+    const firstSchedule = {
+      now: new Date('2026-09-05T10:00:01Z'), timezone: 'UTC', schedule: [],
+    };
+    const secondSchedule = {
+      now: new Date('2026-09-05T10:15:42Z'), timezone: 'UTC', schedule: [],
+    };
+    const firstFingerprint = relevanceSemanticFingerprint(signals, CONTEXT, firstSchedule);
+    const secondFingerprint = relevanceSemanticFingerprint(signals, CONTEXT, secondSchedule);
+    expect(firstFingerprint).toBe(secondFingerprint);
+    signals[0].attemptFingerprint = firstFingerprint;
 
-      expect(gatewayAgentMock.deleteSessionOnGateway).toHaveBeenCalledTimes(1);
-    },
-  );
+    await judgeSignals(USER, signals, CONTEXT, completion, firstSchedule);
+    await judgeSignals(USER, signals, CONTEXT, completion, secondSchedule);
 
-  it('two runs delete two distinct sessions — the per-run key is cleaned up per run', async () => {
-    gatewayAgentMock.runAgentTurnOnGateway.mockResolvedValue({ ok: true, text: '[]' });
+    expect(calls[0].prompt).not.toBe(calls[1].prompt);
+    expect(calls[0].key).toBe(calls[1].key);
+  });
 
-    await gatewayRelevanceCompletion.complete(USER, 'a');
-    await gatewayRelevanceCompletion.complete(USER, 'b');
+  it('changes semantic identity when positional task context changes', () => {
+    const signals = [signal('a', 'Ada', 'one')];
+    const scheduling = { now: new Date('2026-09-05T10:00:01Z'), timezone: 'UTC', schedule: [] };
+    const secondTask = {
+      ...CONTEXT.tasks[0],
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      title: 'Book the consulate appointment',
+    };
+    const ordered = { ...CONTEXT, tasks: [...CONTEXT.tasks, secondTask] };
+    const reversed = { ...CONTEXT, tasks: [secondTask, ...CONTEXT.tasks] };
 
-    const [first, second] = gatewayAgentMock.deleteSessionOnGateway.mock.calls.map(
-      (c) => c[0].sessionKey,
-    );
-    expect(first).not.toBe(second);
-    expect(gatewayAgentMock.deleteSessionOnGateway).toHaveBeenCalledTimes(2);
+    expect(relevanceSemanticFingerprint(signals, ordered, scheduling))
+      .not.toBe(relevanceSemanticFingerprint(signals, reversed, scheduling));
   });
 });
 
@@ -695,13 +749,15 @@ describe('the judge recommends a time', () => {
       return {
         updates,
         async query(text: string, params: unknown[] = []) {
-          if (text.includes('FROM channel_signals')) return { rows: signalRows, rowCount: 0 };
+          if (text.includes('RETURNING cs.id, cs.source')) return { rows: signalRows, rowCount: 0 };
           // The schedule query is the only `FROM tasks` that filters on `start_date >=`.
           if (text.includes('FROM tasks')) return { rows: scheduleRows, rowCount: 0 };
-          if (text.includes('UPDATE channel_signals')) {
+          if (text.includes('RETURNING (v.id IS NOT NULL) AS stored')) {
             updates.push(params);
-            return { rows: [], rowCount: 1 };
+            const payload = JSON.parse(String(params[1])) as unknown[];
+            return { rows: payload.map(() => ({ stored: true })), rowCount: payload.length };
           }
+          if (text.includes('relevance_attempt_id = NULL')) return { rows: [], rowCount: 1 };
           return { rows: [], rowCount: 0 };
         },
       };
@@ -717,7 +773,8 @@ describe('the judge recommends a time', () => {
         scripted('[{"i":1,"s":"Ada","v":"act","t":"Reply to Ada","w":"2026-08-13T16:00:00-04:00"}]'),
         NOW,
       );
-      expect(fake.updates[0][5]).toBe('2026-08-13T20:00:00.000Z');
+      expect(JSON.parse(String(fake.updates[0][1]))[0].start_at)
+        .toBe('2026-08-13T20:00:00.000Z');
     });
 
     /**
@@ -732,7 +789,7 @@ describe('the judge recommends a time', () => {
         scripted('[{"i":1,"s":"Ada","v":"act","t":"Reply to Ada"}]'),
         NOW,
       );
-      expect(fake.updates[0][5]).toBeNull();
+      expect(JSON.parse(String(fake.updates[0][1]))[0].start_at).toBeNull();
     });
 
     it('feeds the loaded schedule into the prompt the judge sees', async () => {
@@ -743,5 +800,272 @@ describe('the judge recommends a time', () => {
       await runRelevancePassForUser(USER, fake as never, completion, NOW);
       expect(completion.prompts[0]).toContain('meeting — "Standup"');
     });
+  });
+});
+
+// ── AGGREGATION (#1369, #1374) ────────────────────────────────────────────────────────────────
+const PARENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; // matches CONTEXT.tasks[0].id
+
+describe('the aggregation prompt is offered only when there is context to ground it', () => {
+  const s = [signal('s1', 'Ada', 'Another recruiter thread')];
+
+  it('COLD START: a user with no tasks and no lists sees the ORIGINAL act/drop-only prompt', () => {
+    const prompt = buildRelevancePrompt(s, EMPTY_TASK_CONTEXT);
+    // None of the new dispositions are offered — the cold-start floor is byte-for-byte unchanged.
+    expect(prompt).not.toContain('"v": "append"');
+    expect(prompt).not.toContain('"v": "complete"');
+    expect(prompt).not.toContain('"v": "mention"');
+    expect(prompt).not.toContain('AGGREGATE FIRST');
+    expect(prompt).not.toContain('[P1]');
+    // The proven act/drop behaviour is still fully present.
+    expect(prompt).toContain('"v": "act"');
+    expect(prompt).toContain('"v": "drop"');
+  });
+
+  it('indexes the parent tasks and offers append/complete/mention when tasks exist', () => {
+    const prompt = buildRelevancePrompt(s, CONTEXT);
+    expect(prompt).toContain('[P1]');
+    expect(prompt).toContain('"v": "append"');
+    expect(prompt).toContain('"v": "complete"');
+    expect(prompt).toContain('"v": "mention"');
+    expect(prompt).toContain('AGGREGATE FIRST');
+    // The parent id is NEVER shown — only the index.
+    expect(prompt).not.toContain(PARENT_ID);
+  });
+
+  it('offers mention (but not append/complete) when only list structure exists', () => {
+    const prompt = buildRelevancePrompt(s, { tasks: [], listPaths: ['Recruiting'] });
+    expect(prompt).toContain('"v": "mention"');
+    expect(prompt).not.toContain('"v": "append"'); // no [P#] to reference
+  });
+});
+
+describe('parsing append / complete / mention', () => {
+  const s = [signal('s1', 'Ada', 'Another recruiter thread')];
+
+  it('a VERIFIED append names the parent id and carries the item text', () => {
+    const [v] = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"append","p":1,"pe":"File visa","t":"Passport photos ready"}]',
+      s, undefined, CONTEXT,
+    );
+    expect(v).toMatchObject({ decision: 'append', parentTaskId: PARENT_ID, title: 'Passport photos ready' });
+  });
+
+  it('an append whose parent ECHO does not match falls back to a NEW task, never a blind append', () => {
+    const [v] = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"append","p":1,"pe":"Completely different","t":"Passport photos ready"}]',
+      s, undefined, CONTEXT,
+    );
+    expect(v).toMatchObject({ decision: 'act', title: 'Passport photos ready' });
+    expect(v.parentTaskId).toBeUndefined();
+  });
+
+  it('an append to an out-of-range parent index falls back to a new task', () => {
+    const [v] = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"append","p":9,"pe":"File visa","t":"Passport photos ready"}]',
+      s, undefined, CONTEXT,
+    );
+    expect(v.decision).toBe('act');
+  });
+
+  it('a VERIFIED complete closes the named parent', () => {
+    const [v] = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"complete","p":1,"pe":"File visa","t":"Filed it"}]',
+      s, undefined, CONTEXT,
+    );
+    expect(v).toMatchObject({ decision: 'complete', parentTaskId: PARENT_ID, title: 'Filed it' });
+  });
+
+  it('a complete whose parent echo does NOT verify closes NOTHING — the row is left unjudged', () => {
+    // STRICT on the closing side: a wrong auto-close hides work the user still owes, so an
+    // unverified complete produces NO verdict and the signal surfaces instead.
+    const verdicts = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"complete","p":1,"pe":"Wrong parent","t":"Filed it"}]',
+      s, undefined, CONTEXT,
+    );
+    expect(verdicts).toEqual([]);
+  });
+
+  it('a mention becomes a prose disposition, never a task, note optional', () => {
+    const [v] = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"mention","t":"New device signed in"}]',
+      s, undefined, CONTEXT,
+    );
+    expect(v).toMatchObject({ decision: 'mention', title: 'New device signed in' });
+  });
+
+  it('without a context, append/complete cannot resolve — append degrades, complete vanishes', () => {
+    // The parser is called without context (the shape existing callers use); no parent can be
+    // resolved, so the fail-closed rules apply exactly as when the echo fails.
+    const [appended] = parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"append","p":1,"pe":"File visa","t":"Item"}]', s,
+    );
+    expect(appended.decision).toBe('act');
+    expect(parseRelevanceVerdicts(
+      '[{"i":1,"s":"Ada","v":"complete","p":1,"pe":"File visa","t":"done"}]', s,
+    )).toEqual([]);
+  });
+
+  /**
+   * THE AMBIGUOUS-ECHO COLLISION (the review finding this fix closes).
+   *
+   * Two open tasks share a title prefix: "Reply to Ada about contract" [P1] and "Reply to Ada
+   * about invoice" [P2]. The model miscounts the index to P1 but echoes only the SHARED prefix
+   * "Reply to Ada about". Before the fix, that prefix-matched the parent P1 points at and the
+   * verdict was trusted — closing (or appending onto) the WRONG sibling, a real open task the user
+   * still owes. The echo could no longer distinguish the two, so it proved nothing, yet the index
+   * (the thing the echo exists to double-check) was believed anyway.
+   *
+   * With the uniqueness guard an echo that prefix-matches more than one task fails verification, and
+   * the existing fail-closed rules take over: `complete` closes nothing (row surfaces), `append`
+   * falls back to a new task.
+   */
+  describe('an ambiguous parent echo cannot resolve to a unique sibling (review finding)', () => {
+    const SIBLINGS: UserTaskContext = {
+      tasks: [
+        {
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          title: 'Reply to Ada about contract',
+          status: 'pending', priority: 'high', dueAt: null, listName: null, folderName: null,
+        },
+        {
+          id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          title: 'Reply to Ada about invoice',
+          status: 'pending', priority: 'low', dueAt: null, listName: null, folderName: null,
+        },
+      ],
+      listPaths: [],
+    };
+
+    it('a complete whose echo prefix-matches BOTH siblings closes NOTHING — the row surfaces', () => {
+      // p=1 points at the contract task, but "Reply to Ada about" also matches the invoice task.
+      // The model could equally have meant either; refuse to close either.
+      const verdicts = parseRelevanceVerdicts(
+        '[{"i":1,"s":"Ada","v":"complete","p":1,"pe":"Reply to Ada about","t":"Replied"}]',
+        s, undefined, SIBLINGS,
+      );
+      expect(verdicts).toEqual([]);
+    });
+
+    it('an append whose echo prefix-matches BOTH siblings falls back to a NEW task', () => {
+      const [v] = parseRelevanceVerdicts(
+        '[{"i":1,"s":"Ada","v":"append","p":1,"pe":"Reply to Ada about","t":"One more attachment"}]',
+        s, undefined, SIBLINGS,
+      );
+      expect(v).toMatchObject({ decision: 'act', title: 'One more attachment' });
+      expect(v.parentTaskId).toBeUndefined();
+    });
+
+    it('a FULLER echo that resolves to exactly one sibling still verifies (single-match unchanged)', () => {
+      // The uniqueness guard must not punish an honest, distinguishing echo: "…about contract"
+      // matches P1 alone, so the complete is trusted exactly as before.
+      const [v] = parseRelevanceVerdicts(
+        '[{"i":1,"s":"Ada","v":"complete","p":1,"pe":"Reply to Ada about contract","t":"Replied"}]',
+        s, undefined, SIBLINGS,
+      );
+      expect(v).toMatchObject({
+        decision: 'complete',
+        parentTaskId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      });
+    });
+  });
+});
+
+describe('runRelevancePassForUser applies aggregation effects', () => {
+  const NOW = new Date('2026-08-12T12:00:00.000Z');
+  function passDb(signals: unknown[], tasks: unknown[]) {
+    const updates: unknown[][] = [];
+    return {
+      updates,
+      async query(text: string, params: unknown[] = []) {
+        if (text.includes('RETURNING cs.id, cs.source')) return { rows: signals, rowCount: 0 };
+        if (text.includes('FROM tasks')) return { rows: tasks, rowCount: 0 };
+        if (text.includes('RETURNING (v.id IS NOT NULL) AS stored')) {
+          updates.push(params);
+          const payload = JSON.parse(String(params[1])) as unknown[];
+          return { rows: payload.map(() => ({ stored: true })), rowCount: payload.length };
+        }
+        if (text.includes('relevance_attempt_id = NULL')) return { rows: [], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+    };
+  }
+  const sig = { id: 'sig1', source: 'gmail', sender: 'Ada', summary: 'Another recruiter thread' };
+  const parentTask = {
+    id: PARENT_ID, title: 'File visa paperwork', status: 'pending',
+    priority: null, start_date: null, list_name: 'Immigration', folder_name: 'Personal',
+  };
+
+  function effectsSpy(overrides: Partial<SignalAggregationEffects> = {}): SignalAggregationEffects & {
+    appends: unknown[]; completes: unknown[];
+  } {
+    const appends: unknown[] = [];
+    const completes: unknown[] = [];
+    return {
+      appends, completes,
+      async appendItem(input) { appends.push(input); return true; },
+      async completeParent(input) { completes.push(input); return true; },
+      ...overrides,
+    };
+  }
+
+  it('an append verdict fires appendItem with the resolved parent and stores decision=append', async () => {
+    const fake = passDb([sig], [parentTask]);
+    const effects = effectsSpy();
+    const counters = await runRelevancePassForUser(
+      USER, fake as never,
+      scripted('[{"i":1,"s":"Ada","v":"append","p":1,"pe":"File visa","t":"Passport photos ready"}]'),
+      NOW, effects,
+    );
+    expect(counters.append).toBe(1);
+    expect(effects.appends).toEqual([
+      { userId: USER, parentTaskId: PARENT_ID, signalId: 'sig1', source: 'gmail', itemText: 'Passport photos ready' },
+    ]);
+    // Stored: decision 'append' + parent id in the last two params.
+    expect(JSON.parse(String(fake.updates[0][1]))[0]).toMatchObject({
+      decision: 'append', parent_task_id: PARENT_ID,
+    });
+  });
+
+  it('when the parent cannot take the item, the append DOWNGRADES to a new task (never lost)', async () => {
+    const fake = passDb([sig], [parentTask]);
+    const effects = effectsSpy({ async appendItem() { return false; } });
+    const counters = await runRelevancePassForUser(
+      USER, fake as never,
+      scripted('[{"i":1,"s":"Ada","v":"append","p":1,"pe":"File visa","t":"Passport photos ready"}]'),
+      NOW, effects,
+    );
+    expect(counters.append).toBe(0);
+    expect(counters.act).toBe(1);
+    expect(JSON.parse(String(fake.updates[0][1]))[0]).toMatchObject({
+      decision: 'act', parent_task_id: null,
+    });
+  });
+
+  it('a complete verdict fires completeParent and stores decision=complete', async () => {
+    const fake = passDb([sig], [parentTask]);
+    const effects = effectsSpy();
+    const counters = await runRelevancePassForUser(
+      USER, fake as never,
+      scripted('[{"i":1,"s":"Ada","v":"complete","p":1,"pe":"File visa","t":"Filed it"}]'),
+      NOW, effects,
+    );
+    expect(counters.completed).toBe(1);
+    expect(effects.completes).toHaveLength(1);
+    expect(JSON.parse(String(fake.updates[0][1]))[0]).toMatchObject({
+      decision: 'complete', parent_task_id: PARENT_ID,
+    });
+  });
+
+  it('COLD START through the pass: no parents → the append verb is not even offered, act/drop only', async () => {
+    // No tasks at all. The model cannot append because the prompt never indexed a parent.
+    const fake = passDb([sig], []);
+    const effects = effectsSpy();
+    const completion = scripted('[{"i":1,"s":"Ada","v":"act","t":"Reply to Ada about the role"}]');
+    const counters = await runRelevancePassForUser(USER, fake as never, completion, NOW, effects);
+    expect(completion.prompts[0]).not.toContain('AGGREGATE FIRST');
+    expect(counters.act).toBe(1);
+    expect(effects.appends).toEqual([]);
+    expect(effects.completes).toEqual([]);
   });
 });

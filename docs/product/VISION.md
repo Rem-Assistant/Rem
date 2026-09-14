@@ -25,7 +25,7 @@ This document supersedes the older hackathon framing in
 [architecture/system-design.md](../architecture/system-design.md). Keep the
 hackathon docs for history and implementation archaeology; use this file for
 product decisions. It was created from the product direction in
-[issue #402](https://github.com/Rem-Assistant/RemClaw/issues/402).
+[issue #402](https://github.com/Rem-Assistant/Rem/issues/402).
 
 ## Product Promise
 
@@ -222,9 +222,9 @@ The iOS/Mac capability split is audited in
 inventory; this vision doc owns product direction when the two drift. Remote Mac
 access work is tracked from
 the transport model introduced for
-[issue #317](https://github.com/Rem-Assistant/RemClaw/issues/317), and connection
+[issue #317](https://github.com/Rem-Assistant/Rem/issues/317), and connection
 reliability dogfooding is tracked in
-[issue #361](https://github.com/Rem-Assistant/RemClaw/issues/361).
+[issue #361](https://github.com/Rem-Assistant/Rem/issues/361).
 
 ## Local, Cloud, LAN, and Tailnet Gateways
 

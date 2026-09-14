@@ -221,7 +221,7 @@ struct SharedGatewayDetailView<Gateway: GatewaySessionProviding>: View {
         // same gateway, so they share one container instead of scattering the
         // actions into a separate trailing section.
         Section {
-                LabeledContent("Agent runtime", value: "OpenClaw")
+                LabeledContent("Agent runtime", value: "Rem")
                 LabeledContent("Runs on", value: config.provider.runsOnDescription)
                 LabeledContent("Host") {
                     Text(config.hostDisplay ?? config.url)
@@ -388,14 +388,14 @@ struct SharedGatewayDetailView<Gateway: GatewaySessionProviding>: View {
                     } label: {
                         HStack(spacing: 12) {
                             SettingsIcon(icon: "bell.badge.fill", color: .pink)
-                            Text("Automations")
+                            Text("Daily Check-in")
                         }
                     }
                     .accessibilityIdentifier("gateway-automations-nav")
                 } header: {
                     Text("Connectivity")
                 } footer: {
-                    Text("Review paired devices, connected accounts, installed skills, and scheduled automations for this agent.")
+                    Text("Review paired devices, connected accounts, installed skills, and your daily check-in for this agent.")
                 }
 
                 // MARK: - Memory & Keys (what the agent remembers + how it authenticates)

@@ -20,7 +20,7 @@ struct GatewaySetupCode: Codable, Sendable, Equatable {
     ///
     /// When `isBootstrap == true` this carries a short-lived **bootstrap**
     /// credential that the gateway exchanges for a persistent device-auth
-    /// token via OpenClawKit's pair-bootstrap handshake. When false (the
+    /// token via RemKit's pair-bootstrap handshake. When false (the
     /// default) it's a long-lived shared gateway token.
     let token: String
 
@@ -40,7 +40,7 @@ struct GatewaySetupCode: Codable, Sendable, Equatable {
     /// Plumbed through #300a as the structured field callers route on, and
     /// flipped to `true` in #300b for the upstream `{ url, bootstrapToken }`
     /// decoder branch (Mac now emits this format via `openclaw qr --json`).
-    /// That's what unlocks OpenClawKit's transparent bootstrap → device-token
+    /// That's what unlocks RemKit's transparent bootstrap → device-token
     /// handshake at connect time (`GatewayChannel.swift:430-440, 545-607`).
     /// Rem-format payloads (`{ url, token }`) — emitted by the cloud backend
     /// — continue to produce `false`, preserving the long-lived shared-token
@@ -104,7 +104,7 @@ extension GatewaySetupCode {
     ///    long-lived shared auth token.
     /// 2. **Upstream format** — `{ url, bootstrapToken }`. Emitted by
     ///    `openclaw qr --json`. `bootstrapToken` is a short-lived handoff
-    ///    credential; OpenClawKit's pair-bootstrap flow exchanges it for
+    ///    credential; RemKit's pair-bootstrap flow exchanges it for
     ///    a persistent device-auth token server-side.
     ///
     /// Both get mapped into the same struct so callers don't need to
@@ -147,7 +147,7 @@ extension GatewaySetupCode {
 
         // #300b: upstream's `{ url, bootstrapToken }` payload IS a bootstrap
         // credential — short-lived, intended to be exchanged server-side via
-        // OpenClawKit's pair-bootstrap handshake (`GatewayChannel.swift:430-440,
+        // RemKit's pair-bootstrap handshake (`GatewayChannel.swift:430-440,
         // 545-607`) for a persistent device-auth token. Flipping `isBootstrap`
         // to `true` on this branch is what routes the token through
         // `GatewayClient.connect(bootstrapToken:)` instead of `token:`,

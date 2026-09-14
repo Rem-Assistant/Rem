@@ -1275,6 +1275,35 @@ export const composioSignalExecutor: ConnectorSignalExecutor = {
   },
 };
 
+/**
+ * The Composio tool-execution primitive as an exported, mockable seam — the SAME
+ * `client().tools.execute(action, { userId, connectedAccountId, version, arguments }, { signal })`
+ * call shape used by `composioGmailBriefAdapter` (fetchPage above) and `composioSignalExecutor`
+ * (fetchPage above). Lifted out so a Rem-owned backend READ path
+ * (`connector-execution.service.ts`) can run one connector read directly — WITHOUT the OpenClaw
+ * gateway — while `client()` stays private to this module. The body is the identical inline literal
+ * those two call sites pass, so it validates the same envelope contract the SDK returns.
+ */
+export function executeComposioTool(input: {
+  action: string;
+  userId: string;
+  connectedAccountId: string;
+  version: string;
+  arguments: Record<string, unknown>;
+  signal?: AbortSignal;
+}): Promise<unknown> {
+  return client().tools.execute(
+    input.action,
+    {
+      userId: input.userId,
+      connectedAccountId: input.connectedAccountId,
+      version: input.version,
+      arguments: input.arguments,
+    },
+    { signal: input.signal },
+  );
+}
+
 /** Every LIVE connected-account id for `userId` + `toolkit` — the revoke target set. Covers BOTH
  * `ACTIVE` and `INACTIVE`: a **paused** connector's accounts are `INACTIVE` (see `setToolkitEnabled`),
  * yet its row is still `isConnected` and its manage sheet still offers Disconnect. Revoking only

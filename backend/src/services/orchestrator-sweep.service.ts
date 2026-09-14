@@ -1,22 +1,23 @@
 /**
  * orchestrator-sweep — the "brief that ACTS" (#922). A backend-scheduled sweep that
- * finds tasks which are READY TO RUN and runs each one AUTONOMOUSLY through the user's
- * own OpenClaw gateway (Move-2 / AgentBox-drop, gateway-agent.service.ts), then applies
- * the resulting status and leaves an attributed Activity comment — so the brief/check-in
+ * finds tasks which are READY TO RUN and runs each one AUTONOMOUSLY through Rem's hosted
+ * observe runtime, then applies its proposal through the audited `tasks.update` adapter and
+ * leaves an attributed Activity comment — so the brief/check-in
  * that reads `task_comments` reports "here's your state and I've already started handling
  * it" with no extra wiring.
  *
- * This is MULTI-CHAT, not multi-agent: ONE gateway 'main' agent, one SESSION per task
- * (a stable `sessionKey` = `rem-task-<taskId>`). We never spawn multiple agents.
+ * This is MULTI-CHAT, not multi-agent: one canonical `rem-task-<taskId>` session per task.
+ * The model has observe authority only. A separate non-model act run receives one exact,
+ * expiring automation-policy grant for the schema-validated proposal.
  *
  * SAFETY — the sweep is deliberately reversible (mirrors #895):
- *   - The autonomous turn is RESTRICTED to read-only + drafting work (research, look up,
- *     summarize, draft/prepare). The prompt forbids any external/irreversible write —
+ *   - The autonomous turn is RESTRICTED to the supplied task context plus reasoning and drafting.
+ *     The prompt forbids any external/irreversible write —
  *     no sending email/messages, no create/modify/delete of calendar events, reminders,
  *     contacts or files, no money, no sharing changes. A task that REQUIRES such a write
  *     returns `proposed_status: blocked` and is left for the user to run with one tap.
- *     Because the turn performs no external writes, the ONLY state the sweep mutates is
- *     `tasks.status` (+ an attributed comment) — and that IS fully reversible by Undo.
+ *     Because the turn performs no external writes, its product mutations stay inside the task:
+ *     status, context, attributed Activity/Undo, and replayable transcript.
  *   - Apply-with-Undo: when the agent decides a new status, we APPLY it to `tasks.status`
  *     and record the PRE-change value on the comment (`previous_status`, migration 028).
  *     The status change + the comment/Undo record are written in ONE transaction, so a
@@ -24,29 +25,28 @@
  *     existing iOS/Mac UI renders "Applied: <status>" + Undo off that field with NO
  *     client change (Shared/Models/TaskCollaboration.swift `didApplyStatus`).
  *   - Deny-list screen: the same hard deny list the routine runner uses (routine-
- *     governance.ts) screens each task's title + DESCRIPTION + thread BEFORE any gateway
+ *     governance.ts) screens each task's title + DESCRIPTION + thread BEFORE any model
  *     turn — "send email", "wire money", "delete …" never auto-run; they're recorded
  *     blocked-for-review instead. This is defense-in-depth on top of the restricted
- *     prompt. The screen must cover EVERYTHING `buildSweepMessage` injects, including the
- *     agent's own prior `task_context`, or run 1 can write an instruction run 2 obeys.
+ *     prompt. The screen covers all stored Activity/chat text. The automation prompt itself admits
+ *     only first-party user-authored fields/turns until durable external provenance exists.
  *   - Off by default: the sweep only runs when `ORCHESTRATOR_SWEEP_ENABLED` is truthy, so
  *     fleet-wide autonomous execution is behind an explicit opt-in kill-switch (M5).
- *   - The gateway session IS the transcript (Move-2): the run persists to a loadable chat
- *     the user can open — the comment carries the gateway `sessionKey` in `session_id`, so
+ *   - The Rem session IS the transcript: the run serializes with task chat and persists to a loadable chat
+ *     the user can open — the comment carries the canonical `sessionKey` in `session_id`, so
  *     tapping the Activity row opens the REAL conversation (not an empty composer).
  *
- * DEGRADE GRACEFULLY: no gateway / wake failed / timeout / gateway error → the task's
- * claim is RELEASED (run_status back to NULL) and it is skipped, to be retried on a
- * later tick. Never throws past `sweepReadyTasks`, so a flaky gateway can't crash the
- * cron (mirrors run-routines.ts per-item isolation).
+ * DEGRADE GRACEFULLY: a confirmed pre-effect runtime failure releases the claim for retry.
+ * An admitted-but-pending or ambiguous effect holds the claim until stale recovery rather than
+ * minting a second identity. Nothing throws past `sweepReadyTasks`, so a flaky provider can't
+ * crash the cron (mirrors run-routines.ts per-item isolation).
  *
  * Lifecycle / source of truth (principle 3):
  *   - Source of truth for status: `tasks.status`. Undo target: `task_comments.previous_status`.
  *   - claim   : `run_status` NULL → 'running' (atomic, so two ticks can't double-run one task).
- *   - apply   : gateway ok → terminal `run_status` (done/review/blocked) [+ `status` when the
- *               agent proposed a real change] + an attributed comment carrying `previous_status`,
- *               all in ONE transaction.
- *   - release : gateway failure (or a write error) → `run_status` back to NULL (retry next tick).
+ *   - apply   : durable proposal + policy grant → audited effect + terminal `run_status`
+ *               + attributed comment/Undo + task context, all in ONE transaction.
+ *   - release : a confirmed pre-effect failure → `run_status` back to NULL (retry next tick).
  *   - reap    : a claim stranded 'running' past STALE_CLAIM_MINUTES (a crashed prior tick) is
  *               released back to NULL at the top of the next sweep, so a mid-run crash can't
  *               strand a task forever.
@@ -58,24 +58,18 @@
  * way to run it again).
  */
 
-import { pool } from '../db/pool.js';
+import { pool, taskConversationPool } from '../db/pool.js';
 import type { PoolClient } from 'pg';
-import { runAgentTurnOnGateway } from './gateway-agent.service.js';
-import {
-  TASK_VERDICT_PROMPT,
-  readVerdictFromReply,
-  readVerdictFromToolCalls,
-  type ProposedStatus,
-} from './task-verdict.js';
+import { runAgentOnTask } from './task-agent.service.js';
+import type { ProposedStatus } from './task-verdict.js';
 import { screenForDeniedAction, describeDenyCategory } from './routine-governance.js';
 import { resolveModelRuntimeMode, type RunBlock } from './run-block.js';
+import { splitDescription } from './task-description.js';
 import {
-  TASK_CONTEXT_PROMPT,
-  parseTaskContextFromText,
-  runCommentBody,
-  splitDescription,
-  writeAgentTaskContext,
-} from './task-description.service.js';
+  executeTrustedAutomationTaskStatusProposal,
+  type TaskStatusExecutionResult,
+  type TaskStatusProposal,
+} from '../runtime/rem-task-tool-execution.js';
 
 /** A task the sweep decided is ready to run, projected to the fields the agent needs. */
 export interface ReadyTask {
@@ -101,9 +95,9 @@ export interface ReadyTaskComment {
 
 /** Outcome of running ONE ready task. */
 export type SweepTaskStatus =
-  | 'executed' // gateway ran the task autonomously; status applied + comment written
+  | 'executed' // Rem ran the task autonomously; audited status effect + comment committed
   | 'denied' // hard deny-list hit → recorded blocked-for-review, never dispatched
-  | 'skipped_gateway' // no gateway / wake failed / timeout / error → claim released, retry later
+  | 'skipped_runtime' // runtime/effect unavailable → released when retry is proven safe
   | 'skipped_claim'; // another worker already claimed this task this tick
 
 export interface SweepTaskResult {
@@ -114,7 +108,7 @@ export interface SweepTaskResult {
   appliedStatus: ProposedStatus | null;
   /** id of the task_comment written this run, or null when none was written. */
   commentId: string | null;
-  /** Structured reason on a non-executed path (gateway reason / deny categories). */
+  /** Structured reason on a non-executed path (runtime reason / deny categories). */
   reason: string | null;
 }
 
@@ -122,10 +116,10 @@ export interface SweepReport {
   scanned: number;
   executed: number;
   denied: number;
-  /** Total skipped (gateway failure + claim contention) — for the log summary. */
+  /** Total skipped (runtime/effect failure + claim contention) — for the log summary. */
   skipped: number;
-  /** Skipped because the gateway failed / a write errored — retryable, a real miss. */
-  skippedGateway: number;
+  /** Skipped because runtime/effect execution did not complete — a real miss. */
+  skippedRuntime: number;
   /** Skipped because another worker already held the claim — NOT a failure (L8). */
   skippedClaim: number;
   /** Stale 'running' claims released at the top of this sweep (crashed prior ticks). */
@@ -134,36 +128,44 @@ export interface SweepReport {
 }
 
 /**
- * The gateway turn, behind an injectable seam so the sweep is testable without the
- * network. Returns the agent's prose reply + the structured status it marked (parsed
- * from the controlled `proposed_status:` marker line — the same machine marker #895's
- * GMI path uses, NOT free-prose scraping).
+ * The observe turn, behind an injectable seam so the sweep is testable without a provider.
+ * Success includes the durable report call that the policy executor must verify.
  */
 export interface ReadyTaskAgentInput {
   task: ReadyTask;
   comments: ReadyTaskComment[];
   sessionKey: string;
+  idempotencyKey: string;
 }
 export type ReadyTaskAgentResult =
   | {
       ok: true;
       reply: string;
-      proposedStatus: ProposedStatus | null;
+      proposedStatus: ProposedStatus;
       /** Current-state summary for `tasks.description`'s agent block (migration 120).
        *  null = the run said nothing new, which means keep what was already known. */
       taskContext?: string | null;
+      /** Provenance computed by the runner from the exact content admitted to its prompt. */
+      externalContentInfluenced: boolean;
+      proposalRunId: string;
+      toolCallId: string;
     }
   | { ok: false; reason: string };
 export interface ReadyTaskAgentRunner {
   run(input: ReadyTaskAgentInput): Promise<ReadyTaskAgentResult>;
 }
 
+export interface ReadyTaskStatusExecutor {
+  execute(input: TaskStatusProposal): Promise<TaskStatusExecutionResult>;
+}
+
 export interface SweepDeps {
   agent?: ReadyTaskAgentRunner;
   screen?: typeof screenForDeniedAction;
+  statusExecutor?: ReadyTaskStatusExecutor;
 }
 
-/** Global cap per sweep tick — bounds gateway load if a backlog of tasks comes due. */
+/** Global cap per sweep tick — bounds hosted runtime load if a backlog of tasks comes due. */
 export const MAX_TASKS_PER_SWEEP = 100;
 /** Per-user cap per tick — one noisy user can't monopolize the sweep. */
 export const MAX_TASKS_PER_USER = 3;
@@ -172,7 +174,7 @@ export const READY_LOOKBACK_DAYS = 7;
 /**
  * A 'running' claim older than this is treated as ORPHANED (its tick crashed between
  * claim and terminal) and released back to NULL. Comfortably larger than a single run's
- * worst case (gateway wake + a 120s turn + writes), and larger than the 15-min cron
+ * worst case (provider turn + audited write), and larger than the 15-min cron
  * interval, so we never reap a claim the current sweep is legitimately still working.
  */
 export const STALE_CLAIM_MINUTES = 30;
@@ -187,19 +189,15 @@ export function isSweepEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * Execute-directive framing for the autonomous turn. Unlike the routine/agent-run PLAN
- * prompt ("what should happen next"), this tells the gateway agent to actually DO the
- * task now — but ONLY with read-only + drafting tools. It must NOT perform any external
+ * Execute-directive framing for the autonomous turn. This tells Rem to work the task now,
+ * but ONLY with reasoning and drafting. It must NOT perform any external
  * or irreversible write (the sweep runs unattended, and the only reversal we have is a
- * status Undo), and it ends with the SAME machine verdict the manual run asks for —
- * `TASK_VERDICT_PROMPT`, one shared definition, so the two run paths cannot drift into
- * asking for different shapes (that drift is how `proposed_status:` ended up meaning three
- * things at once).
+ * status Undo). `runAgentOnTask` adds the shared schema-validated report contract.
  */
-const SWEEP_SYSTEM_PROMPT =
+const SWEEP_INSTRUCTION =
   'You are Rem running autonomously and UNATTENDED on the user\'s behalf. You are given a ' +
-  'task the user scheduled and its prior comments. Work the task now using ONLY read-only ' +
-  'and drafting tools — research, look things up, summarize, and draft or prepare content. ' +
+  'task the user scheduled and its prior comments. Work the task now using ONLY the supplied ' +
+  'context and drafting/reasoning — summarize, analyze, and draft or prepare content. ' +
   'You MUST NOT take any action that changes the outside world or that cannot be reversed ' +
   'by simply changing this task\'s status: do NOT send emails/messages, do NOT create, ' +
   'modify, or delete calendar events, reminders, contacts, or files, do NOT move money, and ' +
@@ -208,84 +206,79 @@ const SWEEP_SYSTEM_PROMPT =
   'tap. Reply with 1-3 sentences describing exactly what you did or prepared (or why you are ' +
   'blocked). Choose "completed" when you fully finished it with read-only/drafting work, ' +
   '"in_progress" when you made progress but it is not done, and "blocked" when it needs an ' +
-  'external write or an input only the user can provide. ' +
-  TASK_CONTEXT_PROMPT +
-  ' ' +
-  TASK_VERDICT_PROMPT;
+  'external write or an input only the user can provide.';
 
-export function buildSweepMessage(task: ReadyTask, comments: ReadyTaskComment[]): string {
-  const commentLines = comments.length
-    ? comments
-        .map((c) => `- [${c.author_label ?? c.author_kind ?? 'unknown'}]: ${c.body ?? ''}`)
-        .join('\n')
-    : '(no prior comments)';
-  // The description (migration 120) is why an unattended run is not amnesiac. Its two
-  // halves are labelled apart because only one is the agent's to rewrite.
-  const description = splitDescription(task.description);
-  return [
-    SWEEP_SYSTEM_PROMPT,
-    '',
-    `TASK: ${task.title}`,
-    `STATUS: ${task.status ?? 'pending'}`,
-    task.priority ? `PRIORITY: ${task.priority}` : null,
-    description.user
-      ? `\nDESCRIPTION (written by the user — do not restate it as your own):\n${description.user}`
-      : null,
-    description.agent
-      ? `\nCURRENT CONTEXT (what the last run recorded — your task_context REPLACES this):\n${description.agent}`
-      : '\nCURRENT CONTEXT: (none recorded yet)',
-    '',
-    'PRIOR COMMENTS:',
-    commentLines,
-  ]
-    .filter((l) => l !== null)
-    .join('\n');
+/** User-visible ask for the task transcript; never expose the internal automation directive. */
+export function sweepTranscriptAsk(task: Pick<ReadyTask, 'title'>): string {
+  const title = task.title.trim();
+  return title ? `Work on "${title}" now.` : 'Work on this scheduled task now.';
 }
 
-/** The stable gateway session key for a task's sweep run — a loadable chat (Move-2). */
+/** The canonical Rem session key for every task turn, including unattended sweeps. */
 export function taskSessionKey(taskId: string): string {
   // PostgreSQL UUID text is canonical lowercase, while a device can put an uppercase
-  // UUID in the manual agent-run path. Gateway session keys are case-sensitive, so
+  // UUID in the manual agent-run path. Session keys are case-sensitive, so
   // normalize here or a pre-run device chat and the later cloud run split in two.
   return `rem-task-${taskId.trim().toLowerCase()}`;
 }
 
 /**
- * Default runner: one gateway turn per task via runAgentTurnOnGateway (Move-2). On any
- * gateway failure returns a structured `{ ok:false, reason }` so the caller releases the
- * claim and skips — it never falls back to a text-only path that cannot actually act.
+ * Default runner: one trusted-automation observe turn on Rem's hosted runtime. The model can
+ * only emit the report tool; the caller separately verifies and executes that proposal.
  */
 export const defaultReadyTaskAgentRunner: ReadyTaskAgentRunner = {
-  async run({ task, comments, sessionKey }: ReadyTaskAgentInput): Promise<ReadyTaskAgentResult> {
-    const result = await runAgentTurnOnGateway({
-      userId: task.userId,
-      sessionKey,
-      message: buildSweepMessage(task, comments),
-    });
-    if (!result.ok) return { ok: false, reason: result.reason };
-    // ONE verdict contract, shared with the manual run (`task-verdict.ts`): the agent's own
-    // tool call when it made one, otherwise the versioned machine line. The regex this
-    // replaced (`parseProposedStatusFromText`) matched `status:` anywhere in free prose, so
-    // a sentence that merely discussed status was a status decision — on an AUTONOMOUS path
-    // that then applied it to the user's task without anyone asking.
-    // Both machine markers come out; a reply that was ONLY markers gets a plain sentence
-    // rather than the raw text, which used to restore the markers into the activity feed.
-    const fromEnvelope = readVerdictFromReply(result.text);
-    const verdict = readVerdictFromToolCalls(result.toolCalls) ?? fromEnvelope.verdict;
+  async run({ task, comments, sessionKey, idempotencyKey }): Promise<ReadyTaskAgentResult> {
+    const description = splitDescription(task.description);
+    // Automation-policy approval may only be influenced by first-party user instructions.
+    // Agent-authored comments/context have no durable external-content provenance yet, so do
+    // not admit them to this unattended prompt. User-authored task fields and comments are the
+    // explicit instruction boundary; connector/browser outputs must remain user-approved until
+    // the runtime persists provenance for them.
+    const userComments = comments.filter((comment) => comment.author_kind === 'user');
+    const result = await runAgentOnTask(
+      {
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        description_user: description.user,
+        description_agent: null,
+      },
+      userComments.map((comment) => ({
+        ...(comment.author_kind ? { author_kind: comment.author_kind } : {}),
+        ...(comment.author_label ? { author_label: comment.author_label } : {}),
+        ...(comment.body ? { body: comment.body } : {}),
+      })),
+      SWEEP_INSTRUCTION,
+      {
+        userId: task.userId,
+        authority: 'trusted_automation',
+        sessionKey,
+        idempotencyKey,
+      },
+    );
+    if (result.errored) return { ok: false, reason: result.runBlock?.code ?? 'runtime_error' };
+    if (!result.proposedStatus || !result.taskUpdateProposal) {
+      return { ok: false, reason: 'proposal_unverified' };
+    }
     return {
       ok: true,
-      reply: runCommentBody(fromEnvelope.body),
-      proposedStatus: verdict?.status ?? null,
-      // Read the legacy marker from the STRIPPED body: `parseTaskContextFromText` runs to
-      // the next status marker or the end, so a verdict line below it would otherwise be
-      // swallowed into the summary written to `tasks.description`.
-      taskContext: verdict?.taskContext ?? parseTaskContextFromText(fromEnvelope.body),
+      reply: result.reply,
+      proposedStatus: result.proposedStatus,
+      taskContext: result.taskContext,
+      externalContentInfluenced: false,
+      proposalRunId: result.taskUpdateProposal.runtimeRunId,
+      toolCallId: result.taskUpdateProposal.toolCallId,
     };
   },
 };
 
+const defaultReadyTaskStatusExecutor: ReadyTaskStatusExecutor = {
+  execute: executeTrustedAutomationTaskStatusProposal,
+};
+
 /** Terminal run_status from the agent's proposed status (structured, not string-matched). */
-function terminalRunStatus(proposed: ProposedStatus | null): 'done' | 'review' | 'blocked' {
+function terminalRunStatus(proposed: ProposedStatus): 'done' | 'review' | 'blocked' {
   if (proposed === 'completed') return 'done';
   if (proposed === 'blocked') return 'blocked';
   return 'review';
@@ -301,12 +294,22 @@ function terminalRunStatus(proposed: ProposedStatus | null): 'done' | 'review' |
  */
 export async function reapStaleRunningClaims(now: Date): Promise<number> {
   const result = await pool.query(
-    `UPDATE tasks
+    `UPDATE tasks AS task
         SET run_status = NULL, run_id = NULL, run_started_at = NULL,
             run_last_heartbeat_at = NULL, updated_at = NOW()
-      WHERE run_status = 'running'
-        AND run_started_at IS NOT NULL
-        AND run_started_at < $1::timestamptz - ($2 || ' minutes')::interval`,
+      WHERE task.run_status = 'running'
+        AND task.run_started_at IS NOT NULL
+        AND task.run_started_at < $1::timestamptz - ($2 || ' minutes')::interval
+        AND NOT EXISTS (
+          SELECT 1
+            FROM rem_tool_effects AS effect
+           WHERE effect.user_id = task.user_id
+             AND effect.session_key = 'rem-task-' || LOWER(task.id::text)
+             AND effect.connector = 'Rem Tasks'
+             AND effect.capability_key = 'tasks.write'
+             AND effect.tool_name = 'tasks.update'
+             AND effect.state IN ('running', 'uncertain')
+        )`,
     [now.toISOString(), String(STALE_CLAIM_MINUTES)],
   );
   return result.rowCount ?? 0;
@@ -384,10 +387,8 @@ export function applyPerUserCap(tasks: ReadyTask[], cap = MAX_TASKS_PER_USER): R
 
 /**
  * Insert an attributed orchestrator comment and return its id. `session_id` carries the
- * gateway SESSION KEY (`rem-task-<taskId>`) — the real, loadable Move-2 chat — NOT the
- * backend claim runId, so tapping the Activity row opens the actual conversation the run
- * produced (the bug migration 025 documents). Runs on a caller-supplied client so it can
- * share a transaction with the status apply.
+ * canonical Rem session key (`rem-task-<taskId>`), so Activity opens the durable transcript.
+ * Runs on a caller-supplied client so it can share a transaction with the status apply.
  */
 async function writeSweepComment(
   db: PoolClient,
@@ -402,7 +403,7 @@ async function writeSweepComment(
   const result = await db.query(
     `INSERT INTO task_comments
        (task_id, user_id, author_kind, author_label, body, proposed_status, previous_status, runtime, session_id, run_block_code, run_block_mode)
-     VALUES ($1::uuid, $2::uuid, 'cloud_agent', $3, $4, $5, $6, 'gateway', $7, $8, $9)
+     VALUES ($1::uuid, $2::uuid, 'cloud_agent', $3, $4, $5, $6, 'rem_runtime', $7, $8, $9)
      RETURNING id`,
     [
       task.id,
@@ -432,18 +433,46 @@ async function releaseClaim(task: ReadyTask, runId: string): Promise<void> {
 /**
  * Run ONE ready task autonomously. Never throws. See the file header for the full
  * lifecycle; the short version:
- *   claim → deny-screen → gateway turn → apply-with-Undo (one txn) | release-and-skip.
+ *   claim → deny-screen → Rem observe turn → policy-approved audited effect | safe release.
  */
 export async function runReadyTask(
   task: ReadyTask,
   now: Date,
   deps: SweepDeps = {},
 ): Promise<SweepTaskResult> {
+  const base = { taskId: task.id, userId: task.userId };
+  const lock = await taskConversationPool.connect();
+  try {
+    await lock.query('BEGIN');
+    const acquired = await lock.query(
+      `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired`,
+      [`task-chat:${task.userId}:${task.id.toLowerCase()}`],
+    );
+    if (acquired.rows[0]?.acquired !== true) {
+      return { ...base, status: 'skipped_claim', appliedStatus: null, commentId: null, reason: null };
+    }
+    return await runReadyTaskUnderConversationLock(task, now, deps);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ...base, status: 'skipped_runtime', appliedStatus: null, commentId: null, reason: `error: ${message}` };
+  } finally {
+    await lock.query('ROLLBACK').catch(() => undefined);
+    lock.release();
+  }
+}
+
+async function runReadyTaskUnderConversationLock(
+  task: ReadyTask,
+  now: Date,
+  deps: SweepDeps = {},
+): Promise<SweepTaskResult> {
   const agent = deps.agent ?? defaultReadyTaskAgentRunner;
+  const statusExecutor = deps.statusExecutor ?? defaultReadyTaskStatusExecutor;
   const screen = deps.screen ?? screenForDeniedAction;
   const runId =
     (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const sessionKey = taskSessionKey(task.id);
+  const idempotencyKey = `orchestrator-sweep:${runId}`;
   const base = { taskId: task.id, userId: task.userId };
 
   // 1. Atomic claim: only ONE worker can flip run_status NULL → 'running'. The status
@@ -453,18 +482,32 @@ export async function runReadyTask(
         SET run_status = 'running', run_id = $1, run_started_at = NOW(),
             run_last_heartbeat_at = NOW(), updated_at = NOW()
       WHERE id = $2::uuid AND user_id = $3::uuid
-        AND type = 'task' AND status = 'pending' AND run_status IS NULL`,
+        AND type = 'task' AND status = 'pending' AND run_status IS NULL
+      RETURNING title, status, priority, description, updated_at`,
     [runId, task.id, task.userId],
   );
   if (claim.rowCount === 0) {
     return { ...base, status: 'skipped_claim', appliedStatus: null, commentId: null, reason: null };
   }
+  const claimRow = claim.rows?.[0];
+  const observedTask: ReadyTask = claimRow
+    ? {
+        ...task,
+        title: claimRow.title,
+        status: claimRow.status,
+        priority: claimRow.priority,
+        description: claimRow.description,
+      }
+    : task;
+  const expectedTaskUpdatedAt = claimRow?.updated_at
+    ? new Date(claimRow.updated_at).toISOString()
+    : undefined;
 
-  // 2. Deny-list screen (SAFETY) — BEFORE any gateway turn. A task whose title/thread asks
+  // 2. Deny-list screen (SAFETY) — BEFORE any model turn. A task whose title/thread asks
   //    for a hard-denied action (send email, move money, delete data, change sharing) is
   //    NEVER auto-run; it's recorded blocked-for-review so the user handles it manually.
   //
-  //    THE SCREEN MUST COVER EVERYTHING `buildSweepMessage` PUTS IN THE PROMPT. The
+  //    THE SCREEN MUST COVER EVERYTHING `runAgentOnTask` PUTS IN THE PROMPT. The
   //    description (migration 120) is injected into the unattended turn as both
   //    DESCRIPTION and CURRENT CONTEXT, so screening only the title and comments left a
   //    hole: a task titled "Follow up with Dana" passes the screen while its description
@@ -476,10 +519,18 @@ export async function runReadyTask(
   //    that run 2 executes — a self-reinforcing escalation with no human in the loop.
   //    Screening the raw column covers both halves at once (the marker literals in it are
   //    inert text to the deny list).
-  const comments = await gatherComments(task.id);
+  let gathered: Awaited<ReturnType<typeof gatherComments>>;
+  try {
+    gathered = await gatherComments(observedTask.id, observedTask.userId);
+  } catch (error: unknown) {
+    await releaseClaim(observedTask, runId).catch(() => undefined);
+    const message = error instanceof Error ? error.message : String(error);
+    return { ...base, status: 'skipped_runtime', appliedStatus: null, commentId: null, reason: `error: ${message}` };
+  }
+  const comments = gathered.context;
   const screenText = [
-    task.title,
-    task.description ?? '',
+    observedTask.title,
+    observedTask.description ?? '',
     ...comments.map((c) => c.body ?? ''),
   ].join('\n');
   const denial = screen(screenText);
@@ -495,22 +546,43 @@ export async function runReadyTask(
     //
     // `policy_blocked` (migration 121) is the machine half of the 🚫 prose above. A deny is a
     // real blocked run — it is the sweep's most common one — so run history must be able to
-    // tell it apart from a dead gateway without reading the sentence. The mode rides along for
+    // tell it apart from a failed runtime without reading the sentence. The mode rides along for
     // contract uniformity even though this remedy ("run it yourself") does not depend on it.
-    const denialBlock: RunBlock = {
-      code: 'policy_blocked',
-      mode: await resolveModelRuntimeMode(task.userId),
-    };
     try {
+      const denialBlock: RunBlock = {
+        code: 'policy_blocked',
+        mode: await resolveModelRuntimeMode(observedTask.userId),
+      };
       const commentId = await runInTransaction(async (db) => {
-        await db.query(
+        if (expectedTaskUpdatedAt) {
+          const current = await db.query(
+            `SELECT updated_at,
+                    (SELECT COUNT(*)::int FROM task_comments
+                      WHERE task_id = tasks.id AND user_id = tasks.user_id) AS comment_count,
+                    (SELECT COUNT(*)::int FROM task_chat_messages
+                      WHERE task_id = tasks.id AND user_id = tasks.user_id) AS chat_message_count
+               FROM tasks
+              WHERE id = $1::uuid AND user_id = $2::uuid AND run_id = $3
+              FOR UPDATE`,
+            [observedTask.id, observedTask.userId, runId],
+          );
+          const row = current.rows[0];
+          const unchanged = row
+            && new Date(row.updated_at).toISOString() === expectedTaskUpdatedAt
+            && Number(row.comment_count) === gathered.totalCount
+            && Number(row.chat_message_count) === gathered.chatMessageCount;
+          if (!unchanged) throw new Error('task_observation_changed');
+        }
+        const terminal = await db.query(
           `UPDATE tasks SET run_status = 'blocked', run_block_code = $3, run_block_mode = $4,
                   run_last_heartbeat_at = NOW(), updated_at = NOW()
-            WHERE id = $1::uuid AND user_id = $2::uuid`,
-          [task.id, task.userId, denialBlock.code, denialBlock.mode],
+            WHERE id = $1::uuid AND user_id = $2::uuid AND run_id = $5
+            RETURNING id`,
+          [observedTask.id, observedTask.userId, denialBlock.code, denialBlock.mode, runId],
         );
+        if (!terminal.rows[0]) throw new Error('task_observation_changed');
         return writeSweepComment(
-          db, task, body, 'Rem Orchestrator (blocked)', null, null, sessionKey, denialBlock,
+          db, observedTask, body, 'Rem Orchestrator (blocked)', null, null, sessionKey, denialBlock,
         );
       });
       return {
@@ -523,97 +595,96 @@ export async function runReadyTask(
     } catch (error: unknown) {
       // Recording the denial failed — release the claim so it is re-screened (and denied
       // again) next tick rather than stranded 'running'.
-      await releaseClaim(task, runId).catch(() => {});
+      await releaseClaim(observedTask, runId).catch(() => {});
       const message = error instanceof Error ? error.message : String(error);
-      return { ...base, status: 'skipped_gateway', appliedStatus: null, commentId: null, reason: `error: ${message}` };
+      return { ...base, status: 'skipped_runtime', appliedStatus: null, commentId: null, reason: `error: ${message}` };
     }
   }
 
-  // 3. Run the task autonomously on the user's gateway.
+  // 3. Run one observe-only Rem turn. It may propose a task status but cannot apply it.
   let agentResult: ReadyTaskAgentResult;
   try {
-    agentResult = await agent.run({ task, comments, sessionKey });
+    agentResult = await agent.run({ task: observedTask, comments, sessionKey, idempotencyKey });
   } catch (error: unknown) {
-    // The runner is designed never to throw; guard anyway → treat as a gateway skip.
+    // The runner is designed never to throw; guard anyway → treat as a runtime skip.
     const message = error instanceof Error ? error.message : String(error);
     agentResult = { ok: false, reason: `error: ${message}` };
   }
 
-  // 4a. Gateway failure → RELEASE the claim (run_status back to NULL) and skip. No comment,
-  //     no status change: the task is picked up again on a later tick when the gateway is up.
+  // 4a. Observe failure means no effect was admitted, so release and retry later.
   if (!agentResult.ok) {
-    await releaseClaim(task, runId);
-    return { ...base, status: 'skipped_gateway', appliedStatus: null, commentId: null, reason: agentResult.reason };
+    await releaseClaim(observedTask, runId);
+    return { ...base, status: 'skipped_runtime', appliedStatus: null, commentId: null, reason: agentResult.reason };
   }
 
-  // 4b. Gateway success → apply-with-Undo (#895). Only apply when the agent proposed a
+  // 4b. A durable proposal goes through one policy grant and the audited tasks.update adapter.
+  //     Only expose Undo when the agent proposed a real change from the current status.
   //     REAL change from the current 'pending'; re-affirming pending is a no-op, so
   //     previous_status stays null (no spurious Undo affordance).
-  const previousStatus = task.status ?? 'pending';
-  const willApply = agentResult.proposedStatus !== null && agentResult.proposedStatus !== previousStatus;
+  const previousStatus = observedTask.status ?? 'pending';
+  const willApply = agentResult.proposedStatus !== previousStatus;
   const appliedStatus = willApply ? agentResult.proposedStatus : null;
   const commentPreviousStatus = willApply ? previousStatus : null;
   const runStatus = terminalRunStatus(agentResult.proposedStatus);
 
-  // The terminal status apply AND the comment/Undo record are one transaction. If the
-  // comment INSERT throws (e.g. a constraint), the status apply rolls back with it — so
-  // we can never silently mutate status with no comment and no Undo record (C1).
   try {
-    const commentId = await runInTransaction(async (db) => {
-      // CLEAR the block pair (migration 121). Always NULL here, and that is not laziness:
-      // this write is only reached when the gateway turn SUCCEEDED — a sweep whose turn fails
-      // releases its claim and retries next tick (`releaseClaim`) rather than stamping a
-      // terminal state, so there is no failure reason to record on this path.
-      //
-      // Clearing is nonetheless load-bearing, because the sweep can finish a run the MANUAL
-      // dispatch started: `Run now` stamps a block, the process dies mid-flight,
-      // `releaseStaleRunningClaims` resets `run_status` to NULL, and the sweep then picks the
-      // task up and completes it. Without the NULL the task would report `done` while still
-      // advertising "your runtime is unavailable" from the earlier attempt.
-      await db.query(
-        appliedStatus
-          ? `UPDATE tasks
-                SET run_status = $1, status = $2, run_block_code = NULL, run_block_mode = NULL,
-                    run_last_heartbeat_at = NOW(), updated_at = NOW()
-              WHERE id = $3::uuid AND user_id = $4::uuid`
-          : `UPDATE tasks
-                SET run_status = $1, run_block_code = NULL, run_block_mode = NULL,
-                    run_last_heartbeat_at = NOW(), updated_at = NOW()
-              WHERE id = $2::uuid AND user_id = $3::uuid`,
-        appliedStatus
-          ? [runStatus, appliedStatus, task.id, task.userId]
-          : [runStatus, task.id, task.userId],
-      );
-      // THE RUN WRITES WHAT IT LEARNED (migration 120), in the SAME transaction as the
-      // status apply and the comment — so an unattended run can never leave a description
-      // claiming state the comment and status don't back up. Only the agent's delimited
-      // block is rewritten; the user's own text is untouched, and a run that returned no
-      // summary is a no-op rather than an erasure.
-      await writeAgentTaskContext(db, task.id, task.userId, agentResult.taskContext);
-      return writeSweepComment(
-        db,
-        task,
-        agentResult.reply,
-        'Rem Orchestrator',
-        agentResult.proposedStatus,
-        commentPreviousStatus,
-        sessionKey,
-      );
+    const execution = await statusExecutor.execute({
+      userId: observedTask.userId,
+      taskId: observedTask.id,
+      status: agentResult.proposedStatus,
+      sessionKey,
+      proposalRunId: agentResult.proposalRunId,
+      toolCallId: agentResult.toolCallId,
+      externalContentInfluenced: agentResult.externalContentInfluenced,
+      productCompletion: {
+        expectedStatus: previousStatus,
+        expectedTaskUpdatedAt,
+        expectedCommentCount: gathered.totalCount,
+        expectedChatMessageCount: gathered.chatMessageCount,
+        runStatus,
+        runBlockCode: null,
+        runBlockMode: null,
+        commentBody: agentResult.reply,
+        authorLabel: 'Rem Orchestrator',
+        proposedStatus: agentResult.proposedStatus,
+        previousStatus: commentPreviousStatus,
+        runtime: 'rem_runtime',
+        sessionId: sessionKey,
+        taskContext: agentResult.taskContext,
+        transcript: {
+          runId,
+          ask: sweepTranscriptAsk(observedTask),
+          reply: agentResult.reply,
+        },
+      },
     });
-
+    if (execution.kind !== 'succeeded') {
+    // A pending/conflicting effect has an unresolved durable identity. Keep the claim; stale
+    // recovery also checks the effect ledger and cannot release it until reconciliation reaches
+    // a terminal state. Every other result proves no task mutation committed and is safe to retry.
+      if (!['effect_pending', 'execution_conflict'].includes(execution.reason)) {
+        await releaseClaim(observedTask, runId).catch(() => {});
+      }
+      return {
+        ...base,
+        status: 'skipped_runtime',
+        appliedStatus: null,
+        commentId: null,
+        reason: execution.reason,
+      };
+    }
     return {
       ...base,
       status: 'executed',
       appliedStatus: appliedStatus ?? null,
-      commentId,
+      commentId: execution.comment?.id?.toString() ?? null,
       reason: null,
     };
   } catch (error: unknown) {
-    // Persisting the outcome failed atomically (nothing applied). Release the claim so the
-    // task is retried next tick rather than stranded 'running' with no record.
-    await releaseClaim(task, runId).catch(() => {});
+    // A transport error after effect admission can be ambiguous. Keep the task claim so the
+    // next tick cannot create a second identity; stale recovery and effect reconciliation own it.
     const message = error instanceof Error ? error.message : String(error);
-    return { ...base, status: 'skipped_gateway', appliedStatus: null, commentId: null, reason: `error: ${message}` };
+    return { ...base, status: 'skipped_runtime', appliedStatus: null, commentId: null, reason: `error: ${message}` };
   }
 }
 
@@ -634,20 +705,70 @@ async function runInTransaction<T>(fn: (db: PoolClient) => Promise<T>): Promise<
 }
 
 /** Read a task's prior comments for agent context (read-only, capped). */
-async function gatherComments(taskId: string): Promise<ReadyTaskComment[]> {
+async function gatherComments(taskId: string, userId: string): Promise<{
+  context: ReadyTaskComment[];
+  totalCount: number;
+  chatMessageCount: number;
+}> {
   const result = await pool.query(
-    `SELECT author_kind, author_label, body
-       FROM task_comments
-      WHERE task_id = $1::uuid
-      ORDER BY created_at ASC
-      LIMIT 50`,
-    [taskId],
+    `SELECT
+       COALESCE((
+         SELECT JSON_AGG(row_to_json(comment_rows) ORDER BY comment_rows.created_at)
+           FROM (
+             SELECT author_kind, author_label, body, created_at
+               FROM task_comments
+              WHERE task_id = $1::uuid AND user_id = $2::uuid
+              ORDER BY created_at DESC
+              LIMIT 50
+           ) AS comment_rows
+       ), '[]'::json) AS comments,
+       (SELECT COUNT(*)::int FROM task_comments
+         WHERE task_id = $1::uuid AND user_id = $2::uuid) AS comment_count,
+       COALESCE((
+         SELECT JSON_AGG(row_to_json(chat_rows) ORDER BY chat_rows.seq)
+           FROM (
+             SELECT role, content, seq, created_at
+               FROM task_chat_messages
+              WHERE task_id = $1::uuid AND user_id = $2::uuid
+              ORDER BY seq DESC
+              LIMIT 40
+           ) AS chat_rows
+       ), '[]'::json) AS chat_messages,
+       (SELECT COUNT(*)::int FROM task_chat_messages
+         WHERE task_id = $1::uuid AND user_id = $2::uuid) AS chat_message_count`,
+    [taskId, userId],
   );
-  return result.rows.map((r) => ({
-    author_kind: r.author_kind ?? null,
-    author_label: r.author_label ?? null,
-    body: r.body ?? null,
-  }));
+  const row = result.rows[0] ?? {};
+  const comments = Array.isArray(row.comments) ? row.comments : [];
+  const chatMessages = Array.isArray(row.chat_messages) ? row.chat_messages : [];
+  const context = [
+    ...comments.map((r: any, index: number) => ({
+      author_kind: r.author_kind ?? null,
+      author_label: r.author_label ?? null,
+      body: r.body ?? null,
+      occurredAt: r.created_at,
+      tieBreak: index,
+    })),
+    ...chatMessages.map((r: any) => ({
+      author_kind: r.role === 'user' ? 'user' : 'cloud_agent',
+      author_label: r.role === 'user' ? 'You (task chat)' : 'Rem (task chat)',
+      body: r.content ?? null,
+      occurredAt: r.created_at,
+      tieBreak: Number(r.seq ?? 0) + 10_000,
+    })),
+  ].sort((left, right) => {
+    const byTime = new Date(left.occurredAt ?? 0).getTime() - new Date(right.occurredAt ?? 0).getTime();
+    return byTime || left.tieBreak - right.tieBreak;
+  });
+  return {
+    context: context.map(({ author_kind, author_label, body }) => ({
+      author_kind,
+      author_label,
+      body,
+    })),
+    totalCount: Number(row.comment_count ?? 0),
+    chatMessageCount: Number(row.chat_message_count ?? 0),
+  };
 }
 
 /**
@@ -679,7 +800,7 @@ export async function sweepReadyTasks(now: Date = new Date(), deps: SweepDeps = 
       results.push({
         taskId: task.id,
         userId: task.userId,
-        status: 'skipped_gateway',
+        status: 'skipped_runtime',
         appliedStatus: null,
         commentId: null,
         reason: `error: ${message}`,
@@ -687,14 +808,14 @@ export async function sweepReadyTasks(now: Date = new Date(), deps: SweepDeps = 
     }
   }
 
-  const skippedGateway = results.filter((r) => r.status === 'skipped_gateway').length;
+  const skippedRuntime = results.filter((r) => r.status === 'skipped_runtime').length;
   const skippedClaim = results.filter((r) => r.status === 'skipped_claim').length;
   return {
     scanned: tasks.length,
     executed: results.filter((r) => r.status === 'executed').length,
     denied: results.filter((r) => r.status === 'denied').length,
-    skipped: skippedGateway + skippedClaim,
-    skippedGateway,
+    skipped: skippedRuntime + skippedClaim,
+    skippedRuntime,
     skippedClaim,
     reaped,
     results,

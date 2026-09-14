@@ -8,9 +8,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-PROJECT_PATH="${PROJECT_PATH:-$PROJECT_ROOT/RemClaw.xcodeproj}"
-SCHEME="${SCHEME:-RemClaw}"
-DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/Volumes/SatechiSSD/XcodeDerivedData/RemClaw-preview-health}"
+PROJECT_PATH="${PROJECT_PATH:-$PROJECT_ROOT/Rem.xcodeproj}"
+SCHEME="${SCHEME:-Rem}"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/Volumes/SatechiSSD/XcodeDerivedData/Rem-preview-health}"
 MIN_INTERNAL_FREE_GB="${MIN_INTERNAL_FREE_GB:-20}"
 SKIP_PACKAGE_RESOLUTION="${SKIP_PACKAGE_RESOLUTION:-0}"
 
@@ -90,7 +90,7 @@ if [[ "$SKIP_PACKAGE_RESOLUTION" == "1" ]]; then
 elif (( failures > 0 )); then
   warn "Skipped package resolution until disk/toolchain preflight passes."
 else
-  if "$SCRIPT_DIR/xcodebuild-with-submodules.sh" \
+  if xcodebuild \
     -project "$PROJECT_PATH" \
     -scheme "$SCHEME" \
     -derivedDataPath "$DERIVED_DATA_PATH" \

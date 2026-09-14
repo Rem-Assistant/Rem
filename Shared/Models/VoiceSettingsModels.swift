@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawKit
+import RemKit
 
 /// One voice returned by the gateway's active speech provider.
 ///
@@ -29,6 +29,28 @@ struct VoiceSettingsVoice: Decodable, Identifiable, Equatable, Sendable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .prefix(2)
+            .joined(separator: " · ") ?? ""
+        return traits.isEmpty ? nil : traits
+    }
+
+    /// Second line of a three-line voice row (#1372): the provider's short prose
+    /// descriptor — e.g. "Dominant Firm" under the "Adam" title. Kept separate
+    /// from `displayTraits` so the row can render name / descriptor / traits as
+    /// three distinct lines instead of collapsing description-or-traits into one.
+    var displaySubtitle: String? {
+        let trimmed = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Third line of a three-line voice row (#1372): up to three personality
+    /// traits joined with " · ". `displayDetail` still caps at two for the
+    /// single-line overview subtitle; this raised limit is only for the row's
+    /// dedicated third line.
+    var displayTraits: String? {
+        let traits = personalities?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(3)
             .joined(separator: " · ") ?? ""
         return traits.isEmpty ? nil : traits
     }

@@ -1,6 +1,6 @@
 import AVFoundation
 import Combine
-import OpenClawKit
+import RemKit
 import SwiftUI
 
 /// Gateway-backed voice selection for Rem's spoken responses.
@@ -33,6 +33,9 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
     @State private var previewRequestTask: Task<Void, Never>?
     @State private var activePreviewAttemptID: String?
     @State private var tuning = VoiceTuningStore.settings
+    /// #1372: the voice list is presented as a sheet from the overview rather
+    /// than pushed, so it reads as a focused chooser layered over settings.
+    @State private var isVoiceChooserPresented = false
 
     var body: some View {
         Group {
@@ -48,6 +51,16 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .sheet(isPresented: $isVoiceChooserPresented) {
+            NavigationStack {
+                voiceChooser
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isVoiceChooserPresented = false }
+                        }
+                    }
+            }
+        }
         .task { await load() }
         .onChange(of: tuning) { _, newValue in
             // Persist immediately. The talk managers read the store when they build
@@ -106,8 +119,8 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
         previewSection
 
         Section {
-            NavigationLink {
-                voiceChooser
+            Button {
+                isVoiceChooserPresented = true
             } label: {
                 HStack(spacing: DesignTokens.Spacing.md) {
                     SettingsIcon(icon: "waveform", color: .blue)
@@ -119,10 +132,29 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
                             .font(DesignTokens.Typography.caption1)
                             .foregroundStyle(DesignTokens.Color.labelSecondary)
                     }
+                    Spacer(minLength: 0)
+                    // Disclosure signals a sheet, not a push: the up/down chevrons
+                    // are the system's "choose from a list" affordance (#1372),
+                    // distinct from the drill-in `chevron.forward`.
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DesignTokens.Color.labelTertiary)
+                        .accessibilityHidden(true)
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("voice-chooser-nav")
+            .accessibilityLabel("Voice")
+            .accessibilityValue(selectedVoice?.displayName ?? "Choose a voice")
+            .accessibilityHint("Opens the voice chooser")
+        } header: {
+            Text("Spoken responses")
+        } footer: {
+            Text("Choose how Rem sounds when reading a response or talking with you.")
+        }
 
+        Section {
             tuningSlider(
                 title: "Speed",
                 value: tuningBinding(\.speed, range: .speed),
@@ -133,14 +165,8 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
                 maximumLabel: "Faster",
                 identifier: "voice-speed-slider"
             )
-        } header: {
-            Text("Spoken responses")
-        } footer: {
-            Text("Choose how Rem sounds when reading a response or talking with you. Speed applies to the next thing Rem says.")
-        }
 
-        if VoiceTuningProviderSupport.supportsVoiceCharacter(providerID: providerID) {
-            Section {
+            if VoiceTuningProviderSupport.supportsVoiceCharacter(providerID: providerID) {
                 tuningSlider(
                     title: "Consistency",
                     value: tuningBinding(\.stability, range: .stability),
@@ -162,10 +188,14 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
                     maximumLabel: "Closer",
                     identifier: "voice-similarity-slider"
                 )
-            } header: {
-                Text("Character")
-            } footer: {
-                Text("Consistency trades expressive range for a steadier delivery. Likeness controls how closely Rem holds to the chosen voice.")
+            }
+        } header: {
+            Text("Character & speed")
+        } footer: {
+            if VoiceTuningProviderSupport.supportsVoiceCharacter(providerID: providerID) {
+                Text("Speed applies to the next thing Rem says. Consistency trades expressive range for a steadier delivery, and likeness controls how closely Rem holds to the chosen voice.")
+            } else {
+                Text("Speed applies to the next thing Rem says.")
             }
         }
 
@@ -207,18 +237,22 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
                     }
                 } label: {
                     HStack(spacing: DesignTokens.Spacing.md) {
+                        // #1372: Connect-button fill treatment — the blue glyph
+                        // sits on the subtle translucent `fillTertiary` well (the
+                        // same fill `RemRowConnectCTA` uses), not a solid brand-blue
+                        // disc with a white glyph.
                         ZStack {
                             Circle()
-                                .fill(DesignTokens.Color.brandBlue)
+                                .fill(DesignTokens.Color.fillTertiary)
                                 .frame(width: 36, height: 36)
                             if isLoadingPreview {
                                 ProgressView()
                                     .controlSize(.small)
-                                    .tint(.white)
+                                    .tint(DesignTokens.Color.brandBlueOnFill)
                             } else {
                                 Image(systemName: isActive ? "stop.fill" : "play.fill")
                                     .font(.body.weight(.bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(DesignTokens.Color.brandBlueOnFill)
                             }
                         }
                         .frame(width: 44, height: 44)
@@ -273,34 +307,36 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
         maximumLabel: String,
         identifier: String
     ) -> some View {
+        // #1372: the inline current-value readout is hidden and the min/max
+        // labels move to a row BENEATH the slider — leading + trailing, caption
+        // size, with the space between them — so long labels no longer crowd the
+        // slider track. The numeric readout survives only as the accessibility
+        // value for VoiceOver.
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                Text(title)
-                    .font(DesignTokens.Typography.body)
-                    .foregroundStyle(DesignTokens.Color.labelPrimary)
-                Spacer(minLength: 0)
-                Text(readout(value.wrappedValue))
-                    .font(DesignTokens.Typography.caption1)
-                    .foregroundStyle(DesignTokens.Color.labelSecondary)
-                    .monospacedDigit()
-            }
+            Text(title)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Color.labelPrimary)
             Slider(
                 value: value,
                 in: range.lowerBound...range.upperBound,
                 step: step
             ) {
                 Text(title)
-            } minimumValueLabel: {
-                Text(minimumLabel)
-                    .font(DesignTokens.Typography.caption1)
-                    .foregroundStyle(DesignTokens.Color.labelSecondary)
-            } maximumValueLabel: {
-                Text(maximumLabel)
-                    .font(DesignTokens.Typography.caption1)
-                    .foregroundStyle(DesignTokens.Color.labelSecondary)
             }
             .accessibilityIdentifier(identifier)
             .accessibilityValue(readout(value.wrappedValue))
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.md) {
+                Text(minimumLabel)
+                    .font(DesignTokens.Typography.caption1)
+                    .foregroundStyle(DesignTokens.Color.labelSecondary)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: DesignTokens.Spacing.md)
+                Text(maximumLabel)
+                    .font(DesignTokens.Typography.caption1)
+                    .foregroundStyle(DesignTokens.Color.labelSecondary)
+                    .multilineTextAlignment(.trailing)
+            }
+            .accessibilityHidden(true)
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
     }
@@ -388,13 +424,15 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
                     startPreview(voice)
                 }
             } label: {
+                // #1372: Connect-button fill treatment — blue glyph on the subtle
+                // translucent `fillTertiary` well, not a solid brand-blue disc.
                 ZStack {
                     Circle()
-                        .fill(DesignTokens.Color.brandBlue)
+                        .fill(DesignTokens.Color.fillTertiary)
                         .frame(width: 36, height: 36)
                     Image(systemName: previewPlayer.activeVoiceID == voice.id ? "stop.fill" : "play.fill")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(DesignTokens.Color.brandBlueOnFill)
                 }
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
@@ -407,11 +445,11 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
             .overlay {
                 if previewPlayer.loadingVoiceID == voice.id {
                     Circle()
-                        .fill(DesignTokens.Color.brandBlue)
+                        .fill(DesignTokens.Color.fillTertiary)
                         .frame(width: 36, height: 36)
                     ProgressView()
                         .controlSize(.small)
-                        .tint(.white)
+                        .tint(DesignTokens.Color.brandBlueOnFill)
                 }
             }
             .accessibilityLabel(
@@ -425,16 +463,25 @@ struct SharedVoiceSettingsView<Gateway: GatewaySessionProviding>: View {
                 beginSaving(voice)
             } label: {
                 HStack(spacing: DesignTokens.Spacing.sm) {
+                    // #1372: three-line row — name (title) / provider descriptor
+                    // (subtitle) / up to three personality traits.
                     VStack(alignment: .leading, spacing: 3) {
                         Text(voice.displayName)
                             .font(DesignTokens.Typography.body)
                             .foregroundStyle(DesignTokens.Color.labelPrimary)
                             .multilineTextAlignment(.leading)
-                        if let detail = voice.displayDetail {
-                            Text(detail)
+                        if let subtitle = voice.displaySubtitle {
+                            Text(subtitle)
                                 .font(DesignTokens.Typography.caption1)
                                 .foregroundStyle(DesignTokens.Color.labelSecondary)
                                 .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        if let traits = voice.displayTraits {
+                            Text(traits)
+                                .font(DesignTokens.Typography.caption1)
+                                .foregroundStyle(DesignTokens.Color.labelTertiary)
+                                .lineLimit(1)
                                 .multilineTextAlignment(.leading)
                         }
                     }
@@ -1132,14 +1179,14 @@ private struct VoiceProviderSetupView: View {
                         ? "Managed Voice isn't available for this account. You can use provider credentials owned by your gateway instead."
                         : "This agent uses credentials owned by its gateway. Device-only API keys cannot configure Voice."
                 )
-                Text("Open the gateway's OpenClaw Control UI, then choose Settings → Talk to configure the provider there.")
+                Text("Open the gateway's Control UI, then choose Settings → Talk to configure the provider there.")
                     .font(DesignTokens.Typography.caption1)
                     .foregroundStyle(DesignTokens.Color.labelSecondary)
-                Text("Configure ELEVENLABS_API_KEY in the gateway environment, or set talk.providers.elevenlabs.apiKey in the gateway's OpenClaw configuration.")
+                Text("Configure ELEVENLABS_API_KEY in the gateway environment, or set talk.providers.elevenlabs.apiKey in the gateway's configuration.")
                     .font(DesignTokens.Typography.caption1)
                     .foregroundStyle(DesignTokens.Color.labelSecondary)
                 Link(
-                    "Open the OpenClaw setup guide",
+                    "Open the gateway setup guide",
                     destination: URL(string: "https://docs.openclaw.ai/nodes/talk")!
                 )
             }
@@ -1163,7 +1210,7 @@ private struct VoiceGatewayUpdateInstructionsView: View {
                     .font(DesignTokens.Typography.caption1)
                     .foregroundStyle(DesignTokens.Color.labelSecondary)
                 Link(
-                    "Open the OpenClaw update guide",
+                    "Open the gateway update guide",
                     destination: URL(string: "https://docs.openclaw.ai/install/updating")!
                 )
             }
@@ -1178,7 +1225,7 @@ private struct VoiceGatewayUpdateInstructionsView: View {
     private var updateMessage: String {
         switch provider {
         case .local:
-            "Update this local gateway from the Mac app or OpenClaw tooling. Rem will not change local runtime files from Voice settings."
+            "Update this local gateway from the Mac app or gateway tooling. Rem will not change local runtime files from Voice settings."
         case .manual, .none:
             "This gateway is managed outside Rem. Update and restart it with the same tooling or hosting workflow used to install it."
         case .fly:

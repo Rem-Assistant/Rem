@@ -1,21 +1,7 @@
-.PHONY: setup submodules bootstrap-submodules update-submodules xcodebuild-safe lint test test-all observability
+.PHONY: lint test test-all observability
 .PHONY: symphony symphony_start symphony_stop symphony_status symphony_preflight symphony_dispatch symphony_clean symphony_logs
 .PHONY: symphony\:start symphony\:stop symphony\:status symphony\:preflight symphony\:dispatch symphony\:clean symphony\:logs
 .PHONY: check-readmes
-
-setup: submodules
-
-submodules:
-	./scripts/setup.sh
-
-bootstrap-submodules:
-	./scripts/bootstrap-submodules.sh
-
-update-submodules:
-	git submodule update --remote --recursive
-
-xcodebuild-safe:
-	./scripts/xcodebuild-with-submodules.sh $(ARGS)
 
 lint:
 	@which swiftlint >/dev/null 2>&1 || { echo "SwiftLint not installed. Run: brew install swiftlint"; exit 1; }
@@ -39,7 +25,7 @@ observability:
 # Pre-commit hook install:
 #   cp scripts/pre-commit.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
-SOURCE_DIRS = RemClaw/Sources RemClawMac/Sources Shared/Gateway Shared/Models Shared/Protocols Shared/Services Shared/Views backend/src scripts
+SOURCE_DIRS = Rem/Sources RemMac/Sources Shared/Gateway Shared/Models Shared/Protocols Shared/Services Shared/Views backend/src scripts
 
 check-readmes:
 	@found=0; \

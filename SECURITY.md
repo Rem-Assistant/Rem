@@ -12,7 +12,7 @@ against that surface seriously.
 
 **Use GitHub's private vulnerability reporting:**
 
-> [Report a vulnerability](https://github.com/Rem-Assistant/RemClaw/security/advisories/new)
+> [Report a vulnerability](https://github.com/Rem-Assistant/Rem/security/advisories/new)
 
 That opens a private security advisory visible only to you and the maintainers.
 It is the preferred channel because it keeps the report, the discussion, and the
@@ -36,7 +36,7 @@ there rather than here.
 
 | If the issue is in… | Report to |
 |---|---|
-| The Rem iOS or macOS app, the Rem backend, or the gateway wrapper | **This repo** — [private advisory](https://github.com/Rem-Assistant/RemClaw/security/advisories/new) |
+| The Rem iOS or macOS app, the Rem backend, or the gateway wrapper | **This repo** — [private advisory](https://github.com/Rem-Assistant/Rem/security/advisories/new) |
 | OpenClaw core, the gateway protocol, the agent runtime, or OpenClawKit | [openclaw/openclaw](https://github.com/openclaw/openclaw/security/advisories/new) — see their [SECURITY.md](https://github.com/openclaw/openclaw/blob/main/SECURITY.md) |
 | A third-party dependency | That project, then tell us so we can pin or patch |
 

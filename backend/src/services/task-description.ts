@@ -6,13 +6,13 @@
  * connection pool — and a `DATABASE_URL` requirement — into their tests. The writers that
  * touch Postgres live in `task-description.service.ts`, which re-exports everything here.
  *
- * Product decision — "Task description vs comments vs chat":
+ * docs/product/DECISIONS.md, "Task description vs comments vs chat":
  *   tasks.description  current state, updated in place   <- this file
  *   task_comments      append-only log of each run       (already exists)
  *   chat               the conversation                  (session_id)
  *
  * THE CLOBBER PROBLEM. Both the user and the agent write here. `task_comments` is
- * append-only and therefore safe; `description` is not. The product decision states the
+ * append-only and therefore safe; `description` is not. DECISIONS.md states the
  * constraint directly: "if the agent maintains it, user-authored text must not be
  * silently overwritten."
  *
@@ -31,7 +31,7 @@
  *
  * WHY A DELIMITER RATHER THAN THE ALTERNATIVES.
  *   - Two columns (`description` + `agent_context`) is the same idea with stronger
- *     enforcement, but it splits one product noun in two: the product model is a
+ *     enforcement, but it splits one product noun in two: DECISIONS.md's model is a
  *     single description that reads as one thing ("keeping things thin"), and every
  *     consumer that wants the whole picture would have to concatenate them anyway.
  *   - Last-writer-wins-with-the-user-winning (a `description_updated_by` flag, agent may
@@ -51,10 +51,56 @@
  *   - A hand-edited or legacy row might hold zero, two, or an unterminated block.
  *     `splitDescription` tolerates all of those — it lifts out EVERY block, joins the
  *     remainder as the user's text, and the next write re-emits the canonical form.
+ *
+ * ── THE THIRD REGION: GATHERED ITEMS (aggregation, #1369) ────────────────────────────
+ * The relevance judge can decide an incoming signal EXTENDS an existing task rather than
+ * spawning a new one ("3 new recruiter threads under Career Growth"). Those items
+ * accumulate as a checklist inside the SAME column, in a THIRD delimited region:
+ *
+ *     <user's text>
+ *
+ *     <!-- rem:agent-context -->
+ *     <the agent's current-state summary>
+ *     <!-- /rem:agent-context -->
+ *
+ *     <!-- rem:gathered -->
+ *     - [ ] Recruiter thread from Ada about the Staff role <!--rem:sig=<uuid>;src=gmail-->
+ *     <!-- /rem:gathered -->
+ *
+ * WHY A SEPARATE REGION AND NOT THE AGENT BLOCK. Folding gathered items into the
+ * agent-context block would let the NEXT run's `setAgentContext` — which rewrites that
+ * block wholesale — clobber every accumulated item. That is exactly the failure the
+ * delimiter exists to prevent, one level deeper. So there are now THREE one-sided
+ * writers, none able to touch another's half:
+ *
+ *   setAgentContext(stored, text)      rewrites the agent block   , preserves user + gathered
+ *   setUserSection(stored, text)       rewrites the user's text   , preserves agent + gathered
+ *   appendGatheredItem(stored, item)   appends one gathered item  , preserves user + agent
+ *
+ * IDEMPOTENCY. Each gathered item carries its source `channel_signals.id` in an invisible
+ * HTML-comment tail. `appendGatheredItem` is a no-op when an item with that signal id is
+ * already present, so re-judging a row (a policy bump, a re-poll) cannot append it twice.
+ * That id tail is also the completion handle: `markGatheredItemDone` flips `[ ]`→`[x]`.
  */
 
 export const AGENT_BLOCK_START = '<!-- rem:agent-context -->';
 export const AGENT_BLOCK_END = '<!-- /rem:agent-context -->';
+
+export const GATHERED_BLOCK_START = '<!-- rem:gathered -->';
+export const GATHERED_BLOCK_END = '<!-- /rem:gathered -->';
+
+/** Every structural marker user input must never be allowed to forge. */
+const ALL_BLOCK_MARKERS = [
+  AGENT_BLOCK_START,
+  AGENT_BLOCK_END,
+  GATHERED_BLOCK_START,
+  GATHERED_BLOCK_END,
+] as const;
+
+/** Cap on gathered items in one task, so an over-aggregating parent cannot grow unbounded. */
+export const MAX_GATHERED_ITEMS = 50;
+/** Per-item clamp. A gathered item is a one-line pointer, not a document. */
+export const MAX_GATHERED_ITEM_CHARS = 240;
 
 /**
  * Upper bound on the user's half. A description is a working note, not a document; the
@@ -71,10 +117,12 @@ export const MAX_USER_DESCRIPTION_CHARS = 8000;
 export const MAX_AGENT_CONTEXT_CHARS = 4000;
 
 export interface DescriptionParts {
-  /** The user's own text, with the agent block lifted out. Null when empty. */
+  /** The user's own text, with the agent + gathered blocks lifted out. Null when empty. */
   user: string | null;
-  /** The agent's current-state summary from inside the block. Null when absent. */
+  /** The agent's current-state summary from inside the agent block. Null when absent. */
   agent: string | null;
+  /** The raw gathered-items region (the checklist markdown), or null when absent. */
+  gathered: string | null;
 }
 
 /** Trim, and treat an all-whitespace value as absent rather than as an empty string. */
@@ -85,66 +133,85 @@ export function blankToNull(value: string | null | undefined): string | null {
 }
 
 /**
- * Split a stored description into its two halves.
+ * Split a stored description into its three regions: the user's text, the agent's
+ * current-state summary, and the gathered-items checklist.
  *
  * Tolerant by design — it is the only reader, so it has to cope with whatever is actually
  * in the column: no block, one block, several blocks (a legacy or hand-edited row), or a
- * start marker with no end (a truncated write). Every block found is lifted out and joined
- * as the agent's half; everything else is the user's half, in order.
+ * start marker with no end (a truncated write). At each step it lifts out whichever block
+ * starts NEXT (agent or gathered), so the two regions may appear in either order; every
+ * block found is joined into its own bucket, and everything else is the user's text.
  */
 export function splitDescription(stored: string | null | undefined): DescriptionParts {
   if (typeof stored !== 'string' || stored.trim().length === 0) {
-    return { user: null, agent: null };
+    return { user: null, agent: null, gathered: null };
   }
 
   const userParts: string[] = [];
   const agentParts: string[] = [];
+  const gatheredParts: string[] = [];
   let cursor = 0;
 
   for (;;) {
-    const start = stored.indexOf(AGENT_BLOCK_START, cursor);
+    const agentAt = stored.indexOf(AGENT_BLOCK_START, cursor);
+    const gatheredAt = stored.indexOf(GATHERED_BLOCK_START, cursor);
+    // Whichever block opens first at or after the cursor. -1 means "not found".
+    let start = -1;
+    let startMarker = AGENT_BLOCK_START;
+    let endMarker = AGENT_BLOCK_END;
+    let bucket = agentParts;
+    if (agentAt !== -1 && (gatheredAt === -1 || agentAt < gatheredAt)) {
+      start = agentAt;
+    } else if (gatheredAt !== -1) {
+      start = gatheredAt;
+      startMarker = GATHERED_BLOCK_START;
+      endMarker = GATHERED_BLOCK_END;
+      bucket = gatheredParts;
+    }
+
     if (start === -1) {
       userParts.push(stored.slice(cursor));
       break;
     }
     userParts.push(stored.slice(cursor, start));
 
-    const bodyStart = start + AGENT_BLOCK_START.length;
-    const end = stored.indexOf(AGENT_BLOCK_END, bodyStart);
+    const bodyStart = start + startMarker.length;
+    const end = stored.indexOf(endMarker, bodyStart);
     if (end === -1) {
       // Unterminated block (a truncated or hand-edited row): everything after the start
-      // marker is the agent's, so we never re-emit a dangling marker.
-      agentParts.push(stored.slice(bodyStart));
+      // marker belongs to that block, so we never re-emit a dangling marker.
+      bucket.push(stored.slice(bodyStart));
       cursor = stored.length;
       break;
     }
-    agentParts.push(stored.slice(bodyStart, end));
-    cursor = end + AGENT_BLOCK_END.length;
+    bucket.push(stored.slice(bodyStart, end));
+    cursor = end + endMarker.length;
   }
 
-  const user = userParts
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .join('\n\n');
-  const agent = agentParts
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .join('\n\n');
+  const join = (parts: string[]) =>
+    parts.map((part) => part.trim()).filter((part) => part.length > 0).join('\n\n');
 
-  return { user: blankToNull(user), agent: blankToNull(agent) };
+  return {
+    user: blankToNull(join(userParts)),
+    agent: blankToNull(join(agentParts)),
+    gathered: blankToNull(join(gatheredParts)),
+  };
 }
 
-/** Re-emit the canonical stored form from the two halves. Null when both are empty. */
+/** Re-emit the canonical stored form from the three regions. Null when all are empty. */
 export function composeDescription(
   user: string | null | undefined,
   agent: string | null | undefined,
+  gathered?: string | null | undefined,
 ): string | null {
   const u = blankToNull(user);
   const a = blankToNull(agent);
-  if (!u && !a) return null;
-  if (!a) return u;
-  const block = `${AGENT_BLOCK_START}\n${a}\n${AGENT_BLOCK_END}`;
-  return u ? `${u}\n\n${block}` : block;
+  const g = blankToNull(gathered);
+  const sections: string[] = [];
+  if (u) sections.push(u);
+  if (a) sections.push(`${AGENT_BLOCK_START}\n${a}\n${AGENT_BLOCK_END}`);
+  if (g) sections.push(`${GATHERED_BLOCK_START}\n${g}\n${GATHERED_BLOCK_END}`);
+  return sections.length > 0 ? sections.join('\n\n') : null;
 }
 
 /**
@@ -179,7 +246,8 @@ export function composeDescription(
 export function stripAgentBlockMarkers(text: string): string {
   let current = text;
   for (;;) {
-    const next = current.split(AGENT_BLOCK_START).join('').split(AGENT_BLOCK_END).join('');
+    let next = current;
+    for (const marker of ALL_BLOCK_MARKERS) next = next.split(marker).join('');
     if (next === current) return current;
     current = next;
   }
@@ -196,23 +264,147 @@ export function setAgentContext(
   stored: string | null | undefined,
   agentContext: string | null | undefined,
 ): string | null {
-  const { user } = splitDescription(stored);
+  const { user, gathered } = splitDescription(stored);
   const agent = blankToNull(agentContext)?.slice(0, MAX_AGENT_CONTEXT_CHARS) ?? null;
-  return composeDescription(user, stripAgentBlockMarkers(agent ?? '') || null);
+  return composeDescription(user, stripAgentBlockMarkers(agent ?? '') || null, gathered);
 }
 
 /**
- * THE USER'S WRITE. Replaces the user's text; the agent block survives byte-for-byte.
- * Passing null/blank clears the user's half only — a user emptying the field does not
- * erase what Rem knows.
+ * THE USER'S WRITE. Replaces the user's text; the agent and gathered blocks survive
+ * byte-for-byte. Passing null/blank clears the user's half only — a user emptying the
+ * field does not erase what Rem knows or what it has gathered.
  */
 export function setUserSection(
   stored: string | null | undefined,
   userText: string | null | undefined,
 ): string | null {
-  const { agent } = splitDescription(stored);
+  const { agent, gathered } = splitDescription(stored);
   const user = blankToNull(userText);
-  return composeDescription(user ? blankToNull(stripAgentBlockMarkers(user)) : null, agent);
+  return composeDescription(
+    user ? blankToNull(stripAgentBlockMarkers(user)) : null,
+    agent,
+    gathered,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gathered items (aggregation, #1369)
+// ---------------------------------------------------------------------------
+
+/** One aggregated pointer inside the gathered region. */
+export interface GatheredItem {
+  /** The human line: "Recruiter thread from Ada about the Staff role". */
+  text: string;
+  /** `channel_signals.id` that produced it — the idempotency + completion handle. */
+  signalId: string;
+  /** Source slug for attribution ("gmail"). */
+  source: string;
+  /** True once a downstream signal showed this item was handled. */
+  done: boolean;
+}
+
+/**
+ * Strip anything that could forge structure out of a gathered item's human text: the block
+ * markers (via the fixed-point strip) AND raw HTML-comment delimiters, so the invisible
+ * `<!--rem:sig=…-->` metadata tail cannot be spoofed from item text. Collapses newlines —
+ * a gathered item is one line — and clamps length.
+ */
+export function sanitizeGatheredText(text: string | null | undefined): string {
+  if (typeof text !== 'string') return '';
+  const stripped = stripAgentBlockMarkers(text).split('<!--').join('').split('-->').join('');
+  const oneLine = stripped.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return oneLine.length <= MAX_GATHERED_ITEM_CHARS
+    ? oneLine
+    : `${oneLine.slice(0, MAX_GATHERED_ITEM_CHARS - 1)}…`;
+}
+
+/** Render one gathered item as a markdown checklist line with an invisible metadata tail. */
+export function formatGatheredItem(item: GatheredItem): string {
+  const box = item.done ? '[x]' : '[ ]';
+  const text = sanitizeGatheredText(item.text) || '(item)';
+  // signalId/source are validated slugs upstream; strip separators defensively so the tail
+  // stays a single parseable comment.
+  const sig = String(item.signalId).replace(/[^A-Za-z0-9-]/g, '');
+  const src = String(item.source).replace(/[^A-Za-z0-9._-]/g, '');
+  return `- ${box} ${text} <!--rem:sig=${sig};src=${src}-->`;
+}
+
+/** Matches one rendered gathered line, capturing the checkbox, text, signal id, and source. */
+const GATHERED_ITEM_RE =
+  /^-\s*\[([ xX])\]\s*(.*?)\s*<!--rem:sig=([A-Za-z0-9-]+);src=([A-Za-z0-9._-]*)-->\s*$/;
+
+/**
+ * Parse the gathered region back into items. Tolerant: any line that is not a recognised
+ * gathered line is ignored, so a hand-edited note between items never breaks parsing.
+ */
+export function parseGatheredItems(gathered: string | null | undefined): GatheredItem[] {
+  if (typeof gathered !== 'string' || !gathered.trim()) return [];
+  const items: GatheredItem[] = [];
+  for (const line of gathered.split('\n')) {
+    const match = GATHERED_ITEM_RE.exec(line.trim());
+    if (!match) continue;
+    items.push({
+      done: match[1].toLowerCase() === 'x',
+      text: match[2].trim(),
+      signalId: match[3],
+      source: match[4],
+    });
+  }
+  return items;
+}
+
+/** Re-emit a list of items as the gathered region body, capped at `MAX_GATHERED_ITEMS`. */
+function renderGatheredItems(items: GatheredItem[]): string | null {
+  const capped = items.slice(0, MAX_GATHERED_ITEMS);
+  if (capped.length === 0) return null;
+  return capped.map(formatGatheredItem).join('\n');
+}
+
+/**
+ * APPEND ONE GATHERED ITEM. Idempotent on `signalId`: if an item from that signal is
+ * already present its TEXT is refreshed in place (a re-delivery may carry better wording)
+ * but no second row is added. Preserves the user and agent regions byte-for-byte.
+ *
+ * Returns the stored description unchanged when the cap is already reached and the item is
+ * new — an over-aggregating parent stops growing rather than evicting an existing item.
+ */
+export function appendGatheredItem(
+  stored: string | null | undefined,
+  item: GatheredItem,
+): string | null {
+  const parts = splitDescription(stored);
+  const items = parseGatheredItems(parts.gathered);
+  const signalId = String(item.signalId).replace(/[^A-Za-z0-9-]/g, '');
+  if (!signalId) return stored ?? null; // no id → no idempotency handle → refuse
+
+  const existing = items.findIndex((it) => it.signalId === signalId);
+  if (existing !== -1) {
+    // Refresh text/source, KEEP the done flag — a re-poll must not un-complete an item.
+    items[existing] = { ...items[existing], text: item.text, source: item.source };
+  } else {
+    if (items.length >= MAX_GATHERED_ITEMS) return stored ?? null;
+    items.push({ ...item, signalId, done: item.done ?? false });
+  }
+  return composeDescription(parts.user, parts.agent, renderGatheredItems(items));
+}
+
+/**
+ * Mark one gathered item done (subitem completion). No-op — returns the input unchanged —
+ * when no item matches `signalId`, so a completion signal that cannot be located never
+ * mutates the description. STRICT on the closing side: absence of a match is treated as
+ * "leave it open", never "close something".
+ */
+export function markGatheredItemDone(
+  stored: string | null | undefined,
+  signalId: string,
+): string | null {
+  const parts = splitDescription(stored);
+  const items = parseGatheredItems(parts.gathered);
+  const target = String(signalId).replace(/[^A-Za-z0-9-]/g, '');
+  const idx = items.findIndex((it) => it.signalId === target);
+  if (idx === -1 || items[idx].done) return stored ?? null;
+  items[idx] = { ...items[idx], done: true };
+  return composeDescription(parts.user, parts.agent, renderGatheredItems(items));
 }
 
 // ---------------------------------------------------------------------------

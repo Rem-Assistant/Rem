@@ -8,7 +8,7 @@ import SwiftUI
 /// Extracted from `SharedRemChatView.composerBar` so the chat input and the task
 /// **comment** input render the same component (DRY rule; Decision Principle 1 —
 /// reuse an existing pattern). The chat composer's *logic* was too coupled to
-/// `OpenClawChatViewModel` (send / abort / quota / attachments / sessions /
+/// `RemChatViewModel` (send / abort / quota / attachments / sessions /
 /// thinking) to reuse directly, so only the **presentation** is shared here:
 /// every interactive affordance is injected by the host via a `@ViewBuilder`
 /// slot.

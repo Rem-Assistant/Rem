@@ -12,8 +12,8 @@ import WebSocket from 'ws';
  *
  * ROOT CAUSE (#1087 live-test failure, "Connect rejected: protocol mismatch"): this used to be a
  * single hardcoded `PROTOCOL_VERSION = 3` sent as BOTH `minProtocol` and `maxProtocol` — a fixed
- * version, not a range. The pinned gateway image (the hosted gateway build, operated
- * separately, at a99c65a973d3bfa2e9f1288d9a25ba3e06b40c03 / 2026.5.10-beta.1)
+ * version, not a range. The pinned gateway image (OPENCLAW_GIT_REF in
+ * deploy/openclaw-gateway/Dockerfile, a99c65a973d3bfa2e9f1288d9a25ba3e06b40c03 / 2026.5.10-beta.1)
  * bumped its OWN `PROTOCOL_VERSION` to 4 (openclaw/src/gateway/protocol/version.ts). The gateway's
  * handshake gate (openclaw/src/gateway/server/ws-connection/message-handler.ts
  * `supportsCurrentProtocol`) is `maxProtocol >= <gateway's PROTOCOL_VERSION> && minProtocol <=
@@ -105,7 +105,7 @@ function heartbeatIntervalMs(): number {
  *
  * FIX: mirror the other "this gateway can be slow" budgets already established in this codebase —
  * `DEFAULT_AGENT_TURN_TIMEOUT_MS` (gateway-agent.service.ts, 120_000) and `pollHealthcheck`'s
- * 120_000 (the managed pre-warm pool pipeline) — rather than inventing a new, smaller number. 120s comfortably covers
+ * 120_000 (pool.service.ts) — rather than inventing a new, smaller number. 120s comfortably covers
  * the cited 15-67s single-RPC worst case even for patchGatewayConfig's two sequential round trips.
  * Bumping this is safe: a longer timeout only makes a genuinely-broken call fail slower, it cannot
  * make a working call behave worse. (Deliberately NOT touched: the legacy WS-only

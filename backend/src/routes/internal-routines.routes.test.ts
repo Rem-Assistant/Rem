@@ -124,6 +124,21 @@ describe('inbound routine cron webhook', () => {
       expect(getRoutineByIdMock).toHaveBeenCalledWith(ROUTINE_ID);
       expect(runRoutineMock).toHaveBeenCalledTimes(1);
       expect(runRoutineMock.mock.calls[0][0]).toMatchObject({ id: ROUTINE_ID, userId: USER_ID });
+      expect(runRoutineMock.mock.calls[0]).toEqual([
+        expect.objectContaining({ id: ROUTINE_ID, userId: USER_ID }),
+        expect.any(Date),
+      ]);
+    });
+
+    it('keeps webhook invocations on scheduled dispatch semantics', async () => {
+      getRoutineByIdMock.mockResolvedValue(routine());
+      runRoutineMock.mockResolvedValue(runResult());
+
+      await request(testApp()).post(RUN_PATH).set('Authorization', `Bearer ${SECRET}`).send({});
+      await request(testApp()).post(RUN_PATH).set('Authorization', `Bearer ${SECRET}`).send({});
+
+      expect(runRoutineMock.mock.calls[0]).toHaveLength(2);
+      expect(runRoutineMock.mock.calls[1]).toHaveLength(2);
     });
 
     it('accepts the secret via the x-routine-webhook-secret header too', async () => {
@@ -139,8 +154,11 @@ describe('inbound routine cron webhook', () => {
       expect(runRoutineMock).toHaveBeenCalledTimes(1);
     });
 
-    it('no-ops a paused routine (enabled:false): does not run, comment, or stamp', async () => {
+    it('keeps a paused legacy gateway cron invocation fail-closed', async () => {
       getRoutineByIdMock.mockResolvedValueOnce(routine({ enabled: false }));
+      runRoutineMock.mockResolvedValueOnce({
+        ...runResult(), status: 'skipped', commentId: null, reason: 'routine disabled',
+      });
 
       const res = await request(testApp())
         .post(RUN_PATH)
@@ -148,9 +166,11 @@ describe('inbound routine cron webhook', () => {
         .send({});
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ skipped: 'disabled', routineId: ROUTINE_ID });
-      // The whole run+comment+stamp path lives behind runRoutine — never reached when paused.
-      expect(runRoutineMock).not.toHaveBeenCalled();
+      expect(res.body).toMatchObject({ status: 'skipped', reason: 'routine disabled' });
+      expect(runRoutineMock).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: false }),
+        expect.any(Date),
+      );
     });
 
     it('returns 404 for an unknown routine without running it', async () => {

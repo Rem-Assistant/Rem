@@ -12,8 +12,8 @@
  *     itself anyway — the exact bug being fixed;
  *   - resetting on a machine write, so Rem's own sweep buys a task three more chances to nag.
  * A test that stubbed the DB or called `recordBriefSurfacing` directly would pass with any of those
- * bugs present. So the only things stubbed here are the two NETWORK boundaries (the gateway turn
- * that writes the prose, and the chat injection that delivers it); every SQL statement is the real
+ * bugs present. So the only things stubbed here are the two NETWORK boundaries (the shared runtime
+ * that writes the prose, and gateway chat injection that delivers it); every SQL statement is the real
  * one, running against a real Postgres.
  *
  * The migrations are applied from the actual .sql files, so a schema change that contradicts the
@@ -41,14 +41,16 @@ const poolMock = vi.hoisted(() => ({
 }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock, DatabaseQueryable: null }));
 
-// NETWORK BOUNDARIES ONLY. `runAgentTurnOnGateway` is where the model writes the prose;
-// `injectAssistantMessageOnGateway` is the chat delivery. Everything between them is real.
+// NETWORK BOUNDARIES ONLY. The shared runtime writes prose; gateway injection is still the
+// transitional chat delivery path. Everything between them is real.
 const runAgentTurnOnGateway = vi.hoisted(() => vi.fn());
 const injectAssistantMessageOnGateway = vi.hoisted(() => vi.fn());
+const runAgentTurnOnSharedRuntime = vi.hoisted(() => vi.fn());
 vi.mock('./gateway-agent.service.js', () => ({
   runAgentTurnOnGateway,
   injectAssistantMessageOnGateway,
 }));
+vi.mock('../runtime/agent-runtime.service.js', () => ({ runAgentTurnOnSharedRuntime }));
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 
@@ -97,7 +99,7 @@ function migration(file: string): string {
 
 /** The prose context handed to the model on the most recent authoring turn. */
 function lastAuthoringPrompt(): string {
-  const calls = runAgentTurnOnGateway.mock.calls;
+  const calls = runAgentTurnOnSharedRuntime.mock.calls;
   return calls.length ? (calls[calls.length - 1][0] as { message: string }).message : '';
 }
 
@@ -156,6 +158,11 @@ describe('task staleness through the real brief-authoring path (migration 116)',
       // reference them, so without this the real route 500s — same hand-maintained-list trap as
       // 023/024 and 120 above.
       '121_add_run_block_reason.sql',
+      // Runtime payer ownership is product state, not gateway reachability. This makes the test
+      // exercise the managed shared-runtime branch even though the fixture has no gateway.
+      '126_add_model_runtime_mode.sql',
+      // Daily Brief runtime idempotency survives a stale worker lease and artifact-write retry.
+      '127_add_daily_brief_authoring_attempt.sql',
       // Replayable: the runner records applied files, but every migration is expected to survive a
       // re-run (a first boot after the tracking table was introduced replays everything).
       '116_add_task_staleness.sql',
@@ -178,7 +185,15 @@ describe('task staleness through the real brief-authoring path (migration 116)',
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    runAgentTurnOnGateway.mockResolvedValue({ ok: true, text: 'Here is your day.' });
+    runAgentTurnOnSharedRuntime.mockResolvedValue({
+      ok: true,
+      text: 'Here is your day.',
+      runId: 'runtime-run',
+      sessionKey: 'author',
+      model: 'runtime-model',
+      provenance: { runtimeId: 'rem_shared', persistenceKind: 'rem_runtime', billingMode: 'rem_managed' },
+      toolCalls: [],
+    });
     injectAssistantMessageOnGateway.mockResolvedValue({ ok: true, messageId: 'msg-1' });
     await seedTasks();
   });

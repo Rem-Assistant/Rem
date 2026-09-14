@@ -89,6 +89,7 @@ nonisolated enum ChatEmptyStateGate {
     ///   - hasPendingInboundPrompt: the composer already holds unsent text.
     ///   - hasActiveVoiceContent: live voice transcription is showing.
     ///   - hasLiveActivity: structured activity for the current conversation is showing.
+    ///   - completedInitialHistoryLoad: this destination's first history/bootstrap has settled.
     static func resolve(
         messagesEmpty: Bool,
         isLoading: Bool,
@@ -97,12 +98,28 @@ nonisolated enum ChatEmptyStateGate {
         isInitialHistoryPending: Bool,
         hasPendingInboundPrompt: Bool,
         hasActiveVoiceContent: Bool,
-        hasLiveActivity: Bool
+        hasLiveActivity: Bool,
+        completedInitialHistoryLoad: Bool = false
     ) -> Content {
         // Structured live activity is already current-session transcript content. It outranks an
         // empty/loading first frame so cross-device, local, and voice-started runs cannot be hidden
         // behind starters or a history skeleton while Working is active.
         if hasLiveActivity { return .transcript }
+
+        // **FIX 3 (#1371) — a brand-new conversation must never flash the PRIOR chat's transcript.**
+        // The chat view model is reused across sessions: `RemChatViewModel.performSessionSwitch`
+        // flips `sessionKey` synchronously but leaves `messages` holding the conversation just left
+        // until the new session's async bootstrap replaces them (`bootstrap` assigns `self.messages`
+        // only AFTER `requestHistory` returns). A fresh conversation has NO server history to fetch,
+        // so it takes neither the skeleton nor the `isInitialHistoryPending` path below — it would
+        // otherwise fall straight through to `.transcript` and paint the stale rows ("Call Pastor
+        // Chika Tobi") for the frame before bootstrap clears them. While that first bootstrap is
+        // still loading, treat the fresh transcript as empty so it drops straight to the starters.
+        // Bounded to the initial load (`!completedInitialHistoryLoad`) so a later in-conversation
+        // refresh never blanks a fresh conversation the user has since typed into.
+        let freshInitialLoadInFlight =
+            isFreshConversation && isLoading && !completedInitialHistoryLoad
+        let effectiveMessagesEmpty = messagesEmpty || freshInitialLoadInFlight
 
         // Explicit navigation intent outranks message presence. During an async session switch the
         // view model updates `sessionKey` before replacing `messages`, so non-empty messages can
@@ -118,7 +135,7 @@ nonisolated enum ChatEmptyStateGate {
         // Once there are messages (or streaming/voice content routed through the transcript), the
         // scroll body is the transcript regardless of loading/waking state, provided navigation has
         // not explicitly marked those messages as potentially belonging to the prior session.
-        guard messagesEmpty else { return .transcript }
+        guard effectiveMessagesEmpty else { return .transcript }
 
         // Skeleton ONLY for an existing conversation whose history hasn't arrived yet. A fresh
         // conversation has nothing to fetch, and a pending prompt means the user is composing —

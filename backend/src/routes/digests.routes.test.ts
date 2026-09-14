@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
 
+const runAgentTurnMock = vi.hoisted(() => vi.fn());
+vi.mock('../runtime/agent-runtime.service.js', () => ({
+  runAgentTurnOnSharedRuntime: runAgentTurnMock,
+}));
+
 vi.mock('../middleware/auth.js', () => ({
   requireJwt: (req: express.Request & { userId?: string }, _res: express.Response, next: express.NextFunction) => {
     req.userId = 'f8679a96-0000-4000-8000-000000000001';
@@ -38,6 +43,7 @@ describe('digests routes', () => {
     vi.clearAllMocks();
     delete process.env.GMI_API_KEY;
     delete process.env.GMI_AGENTBOX_URL;
+    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'unavailable' });
   });
 
   it('lists digests newest-first', async () => {
@@ -77,10 +83,6 @@ describe('digests routes', () => {
       .mockResolvedValueOnce({ rows: [{ title: 'Ship digests', status: 'pending', priority: 'high', start_date: null, overdue: false }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      // generateDigest tries the user's gateway first (getGatewayCredentials): no gateway
-      // configured → the row lacks gateway_url → runAgentTurnOnGateway returns no_gateway,
-      // and (GMI unconfigured) we render the local fallback.
-      .mockResolvedValueOnce({ rows: [{}] })
       // INSERT digest
       .mockImplementationOnce(async (_sql: string, values: any[]) => ({
         rows: [
@@ -101,8 +103,9 @@ describe('digests routes', () => {
     expect(res.body).toMatchObject({ kind: 'morning_brief', source: 'fallback' });
     expect(res.body.body).toContain('Ship digests');
 
-    // Query order: [0..1] tz resolve, [2..5] gather, [6] gateway-credentials, [7] INSERT.
-    const insertSql = poolMock.query.mock.calls[7][0] as string;
+    // Query order: [0..1] timezone resolve, [2..5] context gather, [6] INSERT. Runtime I/O is
+    // behind the Rem boundary and deliberately mocked independently from the product database.
+    const insertSql = poolMock.query.mock.calls[6][0] as string;
     expect(insertSql).toContain('INSERT INTO digests');
   });
 
@@ -118,8 +121,6 @@ describe('digests routes', () => {
       .mockResolvedValueOnce({ rows: [{ title: 'Ship digests', status: 'pending', priority: 'high', start_date: null, overdue: false }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      // getGatewayCredentials → no gateway → fallback
-      .mockResolvedValueOnce({ rows: [{}] })
       // INSERT digest
       .mockResolvedValueOnce({ rows: [digestRow] });
 
@@ -146,6 +147,12 @@ describe('digests routes', () => {
     poolMock.query.mockResolvedValueOnce({ rows: [{ id: DIGEST_ID }] });
     const res = await request(testApp()).delete(`/api/v1/digests/${DIGEST_ID}`);
     expect(res.status).toBe(204);
+    const sql = poolMock.query.mock.calls[0][0] as string;
+    expect(sql).toContain('purged_terminal_runtime_copies');
+    expect(sql).toContain('expiring_active_runtime_copies');
+    expect(sql).toContain("state <> 'running'");
+    expect(sql).toContain("state = 'running'");
+    expect(sql).toContain("session_key LIKE 'rem-digest-%'");
   });
 
   it('delete of a missing digest returns 404', async () => {

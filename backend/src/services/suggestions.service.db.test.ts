@@ -28,6 +28,9 @@ let loadScheduleContext: typeof import('./signal-relevance.service.js').loadSche
 let deriveSuggestions: typeof import('./suggestions.service.js').deriveSuggestions;
 let dismissSuggestion: typeof import('./suggestions.service.js').dismissSuggestion;
 let ingestSignal: typeof import('./suggestions.service.js').ingestSignal;
+let selectMentions: typeof import('./suggestions.service.js').selectMentions;
+let signalClusterKey: typeof import('./suggestions.service.js').signalClusterKey;
+let shortHash: typeof import('./suggestions.service.js').shortHash;
 
 // A fixed "now" so overdue/lookahead windows are deterministic.
 const NOW = new Date('2026-07-20T17:00:00.000Z');
@@ -82,11 +85,26 @@ beforeAll(async () => {
     fs.readFileSync(path.join(migrationsDir, '122_add_signal_suggested_time.sql'), 'utf8'),
   );
 
+  // The aggregation dispositions. Applied here — not stubbed — because the deriver now excludes
+  // 'mention'/'append'/'complete' too, and those values only exist after 123 widens the CHECK.
+  await h.db.exec(
+    fs.readFileSync(path.join(migrationsDir, '123_add_signal_aggregation_dispositions.sql'), 'utf8'),
+  );
+
+  // Shared-runtime relevance attempt ownership. Applying the real migration also catches drift
+  // between the upsert's reset columns and the production schema.
+  await h.db.exec(
+    fs.readFileSync(path.join(migrationsDir, '125_create_rem_agent_runs.sql'), 'utf8'),
+  );
+
   loadScheduleContext = (await import('./signal-relevance.service.js')).loadScheduleContext;
   const svc = await import('./suggestions.service.js');
   deriveSuggestions = svc.deriveSuggestions;
   dismissSuggestion = svc.dismissSuggestion;
   ingestSignal = svc.ingestSignal;
+  selectMentions = svc.selectMentions;
+  signalClusterKey = svc.signalClusterKey;
+  shortHash = svc.shortHash;
 });
 
 afterAll(async () => {
@@ -109,6 +127,139 @@ async function insertTask(fields: Record<string, unknown>): Promise<string> {
   );
   return rows[0].id;
 }
+
+/**
+ * PURE-LOGIC tests for the clustering primitives. No DB — these pin the conservative heuristic that
+ * decides which distinct-but-similar signals collapse into one card. The whole design bias is here:
+ * a near-miss must FAIL CLOSED (stay a singleton), never merge two unrelated messages.
+ */
+describe('signalClusterKey (conservative correlation stem)', () => {
+  it('MERGES the founder\'s CI emails: same sender + same subject, only a run number differing', () => {
+    const a = signalClusterKey('notifications@github.com', '', '[Rem-Assistant/Rem] PR run failed: Build Apple (run 4021)');
+    const b = signalClusterKey('notifications@github.com', '', '[Rem-Assistant/Rem] PR run failed: Build Apple (run 4022)');
+    expect(a).toBe(b); // identical subject FORMAT, only the volatile run number differs → merge
+    expect(a).not.toBe(''); // a confident stem, not the singleton escape hatch
+  });
+
+  it('ACCEPTED COST: two different subject FORMATS of the same alert stay separate (no over-merge)', () => {
+    // Whole-line comparison is conservative: "#4023" and "(run 4021)" strip to different stems
+    // ("…build apple" vs "…build apple run"). We accept this missed merge rather than truncate to a
+    // shared prefix and risk merging genuinely different messages (see the over-merge guards below).
+    const hashForm = signalClusterKey('notifications@github.com', '', '[Rem-Assistant/Rem] PR run failed: Build Apple #4023');
+    const runForm = signalClusterKey('notifications@github.com', '', '[Rem-Assistant/Rem] PR run failed: Build Apple (run 4021)');
+    expect(hashForm).not.toBe(runForm);
+    expect(hashForm).not.toBe('');
+    expect(runForm).not.toBe('');
+  });
+
+  it('MERGES the repeated Discover alerts, ignoring the amount', () => {
+    const a = signalClusterKey('Discover <no-reply@discover.com>', '', 'A new transaction of $50.00 was charged to your account');
+    const b = signalClusterKey('Discover <no-reply@discover.com>', '', 'A new transaction of $128.94 was charged to your account');
+    expect(a).toBe(b);
+    expect(a).not.toBe('');
+  });
+
+  it('does NOT merge across senders — two people saying the same thing stay separate', () => {
+    const ada = signalClusterKey('Ada <ada@example.com>', '', 'Are you free to review the visa paperwork this week?');
+    const bob = signalClusterKey('Bob <bob@example.com>', '', 'Are you free to review the visa paperwork this week?');
+    expect(ada).not.toBe(bob);
+  });
+
+  it('does NOT merge genuinely different subjects from the same sender', () => {
+    const s = 'Dana <dana@acme.com>';
+    const a = signalClusterKey(s, '', 'Are you open to a chat about the Staff Engineer role?');
+    const b = signalClusterKey(s, '', 'Following up on the signed offer letter and start date');
+    expect(a).not.toBe(b);
+  });
+
+  it('treats display-name wobble as the same sender by keying on the address inside <…>', () => {
+    const a = signalClusterKey('Deploybot <alerts@example-ci.test>', '', 'Deployment crashed for rem-canary again');
+    const b = signalClusterKey('Deploy Bot <alerts@example-ci.test>', '', 'Deployment crashed for rem-canary again');
+    expect(a).toBe(b);
+  });
+
+  it('is case-insensitive on both sender and subject', () => {
+    const a = signalClusterKey('Ada <Ada@Example.com>', '', 'Weekly Metrics Report');
+    const b = signalClusterKey('ada <ada@example.com>', '', 'weekly metrics report');
+    expect(a).toBe(b);
+  });
+
+  it('strips Re:/Fwd: so a reply groups with the message it answers', () => {
+    const root = signalClusterKey('Ada <ada@example.com>', '', 'Project kickoff planning notes');
+    const reply = signalClusterKey('Ada <ada@example.com>', '', 'Re: Project kickoff planning notes');
+    const fwd = signalClusterKey('Ada <ada@example.com>', '', 'Fwd: RE: Project kickoff planning notes');
+    expect(reply).toBe(root);
+    expect(fwd).toBe(root);
+  });
+
+  it('falls back to the summary when there is no title', () => {
+    const fromSummary = signalClusterKey('Ada <ada@example.com>', '', 'The quarterly board deck is ready for your review');
+    const fromTitle = signalClusterKey('Ada <ada@example.com>', 'The quarterly board deck is ready for your review', 'ignored body text');
+    expect(fromSummary).toBe(fromTitle);
+    expect(fromSummary).not.toBe('');
+  });
+
+  it('CONSERVATIVE GUARD: a too-short/generic stem returns "" so it can never merge', () => {
+    // Below MIN_CLUSTER_STEM_LEN (12) after stripping → the singleton escape hatch.
+    expect(signalClusterKey('Ada <ada@example.com>', '', 'Hi')).toBe('');
+    expect(signalClusterKey('Ada <ada@example.com>', '', 'update')).toBe('');
+    expect(signalClusterKey('Ada <ada@example.com>', '', 'ok thanks')).toBe('');
+    expect(signalClusterKey('Ada <ada@example.com>', '', '#1234')).toBe(''); // pure volatile → empty
+    expect(signalClusterKey('Ada <ada@example.com>', '', '')).toBe('');
+  });
+
+  it('CONSERVATIVE GUARD: a shared leading phrase does NOT collapse unrelated mail', () => {
+    // The whole line decides, not a prefix — so two "FYI: …" notes stay distinct.
+    const a = signalClusterKey('Ada <ada@example.com>', '', 'FYI: the staging deploy finished cleanly');
+    const b = signalClusterKey('Ada <ada@example.com>', '', 'FYI: lunch is moved to the third floor');
+    expect(a).not.toBe(b);
+  });
+
+  // ── OVER-MERGE GUARDS (the reviewer's HIGH finding) ───────────────────────────────────────────
+  // These are the cases a prefix-before-separator rule got WRONG: distinct messages that merely
+  // share a generic leading phrase must NOT collapse, because hiding a fraud/login alert behind
+  // another card's "+N similar" is a real harm. Whole-line comparison keeps each pair distinct.
+  it('OVER-MERGE GUARD: "Notification: fraud alert" is NOT merged with "Notification: statement ready"', () => {
+    const s = 'Chase <no-reply@chase.com>';
+    const fraud = signalClusterKey(s, '', 'Notification: A fraud alert was placed on your card');
+    const statement = signalClusterKey(s, '', 'Notification: Your monthly statement is ready');
+    expect(fraud).not.toBe(statement);
+    expect(fraud).not.toBe(''); // both are confident stems — just DIFFERENT ones
+    expect(statement).not.toBe('');
+  });
+
+  it('OVER-MERGE GUARD: a "Security alert:" sign-in does NOT swallow a "Security alert:" password change', () => {
+    const s = 'Google <no-reply@accounts.google.com>';
+    const signin = signalClusterKey(s, '', 'Security alert: New sign-in from Chrome on Mac');
+    const passwordChanged = signalClusterKey(s, '', 'Security alert: Your password was changed');
+    expect(signin).not.toBe(passwordChanged);
+  });
+
+  it('OVER-MERGE GUARD: distinct CI jobs sharing "PR run failed:" stay separate (Build Apple vs Deploy Backend)', () => {
+    const s = 'GitHub <notifications@github.com>';
+    const apple = signalClusterKey(s, '', '[Rem-Assistant/Rem] PR run failed: Build Apple');
+    const backend = signalClusterKey(s, '', '[Rem-Assistant/Rem] PR run failed: Deploy Backend');
+    expect(apple).not.toBe(backend);
+  });
+
+  it('caps the stem length so a giant subject cannot make an unbounded key', () => {
+    const long = 'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar';
+    const key = signalClusterKey('Ada <ada@example.com>', '', long);
+    // key = "<sender>\u0000<stem>"; the stem portion is capped at 80.
+    const stem = key.split('\u0000')[1];
+    expect(stem.length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe('shortHash (stable cluster-key digest)', () => {
+  it('is deterministic and 12 hex chars', () => {
+    expect(shortHash('abc')).toBe(shortHash('abc'));
+    expect(shortHash('abc')).toMatch(/^[0-9a-f]{12}$/);
+  });
+  it('separates different inputs', () => {
+    expect(shortHash('cluster-a')).not.toBe(shortHash('cluster-b'));
+  });
+});
 
 describe('tier-2 connected-source signals', () => {
   it('turns an ingested Gmail signal into an attributed reply suggestion, leading the list', async () => {
@@ -173,6 +324,37 @@ describe('tier-2 connected-source signals', () => {
       await judge(id, 'act', 'Reply to the recruiter about the Staff role');
       const out = await deriveSuggestions(USER_ID, NOW, 'UTC');
       expect(out[0].title).toBe('Reply to the recruiter about the Staff role');
+    });
+
+    it.each(['mention', 'append', 'complete'])(
+      "a '%s' row is NOT a suggestion (aggregation dispositions never surface as cards)",
+      async (decision) => {
+        const id = await ingestSignal(USER_ID, {
+          source: 'gmail', sourceRef: `agg-${decision}`, sender: 'Ada', summary: 'Some update',
+        });
+        await judge(id, decision, decision === 'mention' ? 'A note' : 'The item');
+        expect((await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail'))
+          .toEqual([]);
+      },
+    );
+
+    it('selectMentions returns the prose-routed signals, newest first, and nothing else', async () => {
+      const drop = await ingestSignal(USER_ID, {
+        source: 'gmail', sourceRef: 'sm-drop', sender: 'Bot', summary: 'noise',
+      });
+      const mention = await ingestSignal(USER_ID, {
+        source: 'gmail', sourceRef: 'sm-mention', sender: 'Apple', summary: 'New device signed in',
+      });
+      const act = await ingestSignal(USER_ID, {
+        source: 'gmail', sourceRef: 'sm-act', sender: 'Dana', summary: 'chat?',
+      });
+      await judge(drop, 'drop', null);
+      await judge(mention, 'mention', 'A new trusted device signed in to your account');
+      await judge(act, 'act', 'Reply to Dana');
+
+      const mentions = await selectMentions(USER_ID, 5, h.db as never);
+      expect(mentions.map((m) => m.id)).toEqual([mention]);
+      expect(mentions[0].note).toBe('A new trusted device signed in to your account');
     });
 
     /**
@@ -426,6 +608,138 @@ describe('tier-2 connected-source signals', () => {
   it('does not leak another user\'s signals', async () => {
     await ingestSignal(OTHER_USER, { source: 'gmail', sourceRef: 'm1', sender: 'Bob', summary: 'secret' });
     expect(await deriveSuggestions(USER_ID, NOW, 'UTC')).toHaveLength(0);
+  });
+});
+
+/**
+ * HEURISTIC CORRELATION ("M") — the founder's real defect: 10+ distinct-but-near-identical CI
+ * emails, each its own row with a unique source_ref, each becoming its own card. These aren't
+ * duplicate rows (ingest already folds those) — they're distinct real messages that should COLLAPSE
+ * into one card with a "+N similar" count. Derive-time grouping only; the rows are untouched.
+ */
+describe('tier-2 heuristic correlation (clustering)', () => {
+  const CI_SENDER = 'GitHub <notifications@github.com>';
+  // Distinct subjects that differ ONLY in the volatile run number — the exact founder case.
+  const ciSummary = (run: number) => `[Rem-Assistant/Rem] PR run failed: Build Apple (run ${run})`;
+
+  it('(a) collapses N same-sender/same-stem signals into ONE card with "+N-1 similar"', async () => {
+    // 10 distinct emails, newest last-ingested. received_at descending so the FIRST (newest) is the
+    // representative; its summary is what the card shows.
+    for (let i = 0; i < 10; i++) {
+      await ingestSignal(USER_ID, {
+        source: 'gmail',
+        sourceRef: `ci-${i}`,
+        sender: CI_SENDER,
+        summary: ciSummary(4020 + i),
+        receivedAt: new Date(NOW.getTime() - i * 60 * 1000).toISOString(), // i=0 newest
+      });
+    }
+
+    const gmail = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(gmail).toHaveLength(1); // ten rows → one card
+    expect(gmail[0].subtitle).toContain('+9 similar');
+    expect(gmail[0].subtitle).toContain(ciSummary(4020)); // representative = newest (i=0)
+
+    // Stable, group-level dismissal key: `${source}:cluster:${shortHash(clusterKey)}`.
+    const stemKey = signalClusterKey(CI_SENDER, '', ciSummary(4020));
+    expect(gmail[0].key).toBe(`gmail:cluster:${shortHash(stemKey)}`);
+    // actionId is the standard UUID shape, derived from the cluster key.
+    expect(gmail[0].actionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it('(a\') dismissing the CLUSTER key drops the whole group, not just one row', async () => {
+    for (let i = 0; i < 4; i++) {
+      await ingestSignal(USER_ID, {
+        source: 'gmail', sourceRef: `ci2-${i}`, sender: CI_SENDER, summary: ciSummary(5000 + i),
+        receivedAt: new Date(NOW.getTime() - i * 60 * 1000).toISOString(),
+      });
+    }
+    const before = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(before).toHaveLength(1);
+    const clusterKey = before[0].key;
+    expect(clusterKey).toContain(':cluster:');
+
+    await dismissSuggestion(USER_ID, clusterKey);
+    const after = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(after).toEqual([]); // all four members gone, as a unit
+  });
+
+  it('(a\'\') a dismissed group that shrinks to ONE surviving member stays suppressed (no leak)', async () => {
+    // Two members form a cluster; dismiss it; then all but one member disappears (aged out of the
+    // fetch window / deleted). The lone survivor still carries the confident stem, so it must remain
+    // suppressed for the TTL rather than popping back as a fresh `${source}:${id}` singleton.
+    const keepId = await ingestSignal(USER_ID, {
+      source: 'gmail', sourceRef: 'shrink-keep', sender: CI_SENDER, summary: ciSummary(6000),
+      receivedAt: new Date(NOW.getTime() - 60 * 1000).toISOString(),
+    });
+    const dropId = await ingestSignal(USER_ID, {
+      source: 'gmail', sourceRef: 'shrink-drop', sender: CI_SENDER, summary: ciSummary(6001),
+      receivedAt: new Date(NOW.getTime() - 120 * 1000).toISOString(),
+    });
+
+    const before = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(before).toHaveLength(1);
+    expect(before[0].key).toContain(':cluster:');
+    await dismissSuggestion(USER_ID, before[0].key);
+
+    // The other member goes away → only `keepId` remains → count === 1 with a confident stem.
+    await h.db.query('DELETE FROM channel_signals WHERE id = $1', [dropId]);
+    const after = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(after).toEqual([]); // still suppressed — NOT resurfaced as gmail:${keepId}
+    expect(keepId).not.toBe(dropId); // sanity: two distinct rows existed
+  });
+
+  it('(b) does NOT over-merge: genuinely different subjects/senders stay separate cards', async () => {
+    await ingestSignal(USER_ID, { source: 'gmail', sourceRef: 'd1', sender: 'Ada <ada@x.com>', summary: 'Are you free to review the visa paperwork this week?', receivedAt: new Date(NOW.getTime() - 1_000).toISOString() });
+    await ingestSignal(USER_ID, { source: 'gmail', sourceRef: 'd2', sender: 'Bob <bob@y.com>', summary: 'Lunch on Thursday at the new ramen place?', receivedAt: new Date(NOW.getTime() - 2_000).toISOString() });
+    await ingestSignal(USER_ID, { source: 'gmail', sourceRef: 'd3', sender: 'Dana <dana@z.com>', summary: 'Following up on the signed offer letter and start date', receivedAt: new Date(NOW.getTime() - 3_000).toISOString() });
+
+    const gmail = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(gmail).toHaveLength(3);
+    // Each is a singleton — today's `${source}:${id}` key, no cluster key, no "+N similar".
+    for (const s of gmail) {
+      expect(s.key.startsWith('gmail:')).toBe(true);
+      expect(s.key).not.toContain(':cluster:');
+      expect(s.subtitle).not.toContain('similar');
+    }
+  });
+
+  it('(c) a singleton is byte-for-byte unchanged: `${source}:${id}` key, no count suffix', async () => {
+    const id = await ingestSignal(USER_ID, {
+      source: 'gmail', sourceRef: 'solo', sender: CI_SENDER, summary: ciSummary(9001),
+      receivedAt: new Date(NOW.getTime() - 60 * 1000).toISOString(),
+    });
+    const gmail = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(gmail).toHaveLength(1);
+    expect(gmail[0].key).toBe(`gmail:${id}`); // NOT a cluster key — one member is not a cluster
+    expect(gmail[0].subtitle).not.toContain('similar');
+    expect(gmail[0].subtitle).toContain(ciSummary(9001));
+  });
+
+  it('(d) conservative guard: generic short stems each stay their OWN singleton, never merged', async () => {
+    // Same sender, sub-threshold stems ("hi", "ok", "yo thanks") → each is its own card.
+    await ingestSignal(USER_ID, { source: 'gmail', sourceRef: 'g1', sender: 'Ada <ada@x.com>', summary: 'Hi', receivedAt: new Date(NOW.getTime() - 1_000).toISOString() });
+    await ingestSignal(USER_ID, { source: 'gmail', sourceRef: 'g2', sender: 'Ada <ada@x.com>', summary: 'ok', receivedAt: new Date(NOW.getTime() - 2_000).toISOString() });
+    await ingestSignal(USER_ID, { source: 'gmail', sourceRef: 'g3', sender: 'Ada <ada@x.com>', summary: 'yo thanks', receivedAt: new Date(NOW.getTime() - 3_000).toISOString() });
+
+    const gmail = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(gmail).toHaveLength(3); // NOT collapsed — too generic to merge safely
+    for (const s of gmail) expect(s.key).not.toContain(':cluster:');
+  });
+
+  it('(e) caps tier-2 at MAX_SUGGESTIONS clusters even when many distinct clusters exist', async () => {
+    // Seven distinct clusters (distinct sender + subject). The cap counts CLUSTERS, so → 5 cards.
+    for (let i = 0; i < 7; i++) {
+      await ingestSignal(USER_ID, {
+        source: 'gmail',
+        sourceRef: `cap-${i}`,
+        sender: `Sender${i} <s${i}@example.com>`,
+        summary: `Distinct subject number ${['one', 'two', 'three', 'four', 'five', 'six', 'seven'][i]} about project alpha`,
+        receivedAt: new Date(NOW.getTime() - i * 60 * 1000).toISOString(),
+      });
+    }
+    const gmail = (await deriveSuggestions(USER_ID, NOW, 'UTC')).filter((s) => s.source === 'gmail');
+    expect(gmail).toHaveLength(5);
   });
 });
 

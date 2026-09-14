@@ -1,70 +1,34 @@
 /**
- * The task cloud agent — ONE runtime: the user's own OpenClaw gateway.
+ * The task cloud agent — product behavior above Rem's runtime boundary.
  *
  * The Task is the shared object; this service runs an agent turn against a task + its prior
  * comments and returns an attributed reply the caller persists as a `cloud_agent` comment,
  * plus the run's machine verdict (`task-verdict.ts`). See docs/agentbox/CONTRACT.md §5.
  *
- * ── WHAT THIS REPLACED, AND WHY (finishing the AgentBox deprecation) ─────────────────
- * This file was `agentbox.service.ts` and resolved a run against three runtimes in order:
- * a deployed AgentBox agent (`GMI_AGENTBOX_URL`), then GMI MaaS directly
- * (`GMI_API_KEY` → `gmiChat`), then a stub. Both live paths spent ONE SHARED ORG KEY on
- * behalf of every user. Three consequences, in ascending order of importance:
+ * Rem-managed task turns execute directly on the durable Rem shared runtime. They are deliberately
+ * side-effect-free: the model may return a schema-validated task-report tool call; callers
+ * own every task/comment mutation. That preserves the existing product behavior without
+ * granting the model external capabilities or requiring a personal OpenClaw gateway. Proven
+ * BYOK accounts temporarily retain their credential-owning gateway as a compatibility fallback.
  *
- *   1. It rate-limits. One key, every user, every run — so `Run now` returned a 429 and
- *      delivered nothing.
- *   2. IT BILLS THE WRONG PARTY. This is the real defect. Every other agent turn in this
- *      backend — brief authoring, relevance judging, the digest, the orchestrator sweep —
- *      already runs on the USER'S gateway, which is what metering follows. AgentBox turns
- *      did not. So the more a user automated, the more the operator paid and the less the
- *      user's own meter moved: backwards, and worse with every user added.
- *   3. Routines ran on it too (`routine-runner.service.ts`), and a routine is an automation
- *      by definition — the single most repeated way to spend the shared key.
- *
- * The gateway is not a new dependency here: `runViaGateway` already existed and already ran
- * first whenever a caller passed `userId`. What changed is that `Run now` was the one caller
- * forbidden from passing it, and the fallbacks below it are gone.
- *
- * ── THE OBSTACLE THAT BLOCKED THIS, AND WHAT IT ACTUALLY WAS ─────────────────────────
- * `tasks.routes.ts` carried a comment refusing `userId` on the run-now dispatch:
- *
- *     "This is the only consumer of the structured `proposed_status` contract
- *      (runViaAgentBoxUrl reads `proposed_status`/`confidence` from JSON); the gateway path
- *      returns prose and would drop that structured signal."
- *
- * Checked rather than believed. `GMI_AGENTBOX_URL` is set nowhere in this repo's deploy —
- * only in tests and in `deploy/agentbox/README.md`, which documents setting it by hand — and
- * the reported failure is a GMI 429, which is `gmiChat`'s error, from `runViaGmiMaaS`. So
- * production `Run now` was NOT on the JSON contract. It was on `parseProposedStatusFromText`:
- * a regex that matched `status:` anywhere in the model's prose. The gateway path used the
- * same regex. The comment defended a contract that was not in service, and the switch it
- * blocked would have lost nothing that production actually had.
- *
- * The replacement is therefore not a restoration, it is a first version: `task-verdict.ts`
- * defines a real verdict, validated once, read from the agent's own tool call when the
- * carrier exists and from a versioned machine line until then. The regex is deleted.
- *
- * ── WHAT A GATEWAY-ONLY RUN COSTS ────────────────────────────────────────────────────
- * A user with no gateway can no longer run a task at all. That is deliberate: the previous
- * "fallback" for that user was the operator's own API key, which is the defect. They get an
- * honest, actionable comment (`NO_GATEWAY_BODY`) and `run_status='blocked'` instead of a
- * silent charge to someone else.
- *
- * PER-RUN MODEL SELECTION (#808) IS NOT HONOURED ON THIS PATH, and callers should know it
- * rather than discover it. `ChatSendParamsSchema` is `additionalProperties:false` with no
- * `model` field (openclaw `src/gateway/protocol/schema/logs-chat.ts:35-54`), so a turn runs
- * on whatever model that user's gateway is configured with. `opts.model` is still accepted
- * so routine plumbing keeps compiling, and is deliberately ignored here — see its docblock.
+ * Per-run model selection, tenant identity, idempotency, quota ownership, cancellation,
+ * persistence, and execution provenance all travel through the Rem runtime contract.
  *
  * Never throws past the caller: every failure returns a labelled, `errored:true` result so a
  * route can always persist a comment and return 201.
  */
 
-import { runAgentTurnOnGateway } from './gateway-agent.service.js';
+import type {
+  AgentRuntimeProvenance,
+  RuntimeAuthority,
+  RuntimeToolPolicy,
+} from '../runtime/agent-runtime.js';
 import {
-  blockCodeForGatewayFailure,
-  resolveModelRuntimeMode,
-  type ModelRuntimeMode,
+  runAgentTurn,
+  runAgentTurnOnSharedRuntime,
+} from '../runtime/agent-runtime.service.js';
+import {
+  blockCodeForRuntimeFailure,
   type RunBlock,
 } from './run-block.js';
 import {
@@ -74,8 +38,10 @@ import {
 } from './task-description.js';
 import {
   TASK_VERDICT_PROMPT,
+  TASK_VERDICT_TOOL_NAME,
   readVerdictFromReply,
   readVerdictFromToolCalls,
+  readTaskVerdictToolCall,
   type ProposedStatus,
   type VerdictSource,
 } from './task-verdict.js';
@@ -83,20 +49,32 @@ import {
 export type { ProposedStatus } from './task-verdict.js';
 
 /** Per-run agent options. */
-export interface AgentRunOpts {
+interface AgentRunSharedOpts {
   /**
-   * IGNORED, and kept only so `routine-runner.service.ts` (#808, per-routine model) keeps
-   * compiling while the routine's model column still exists. The gateway's `chat.send` has
-   * no model parameter, so the run uses the user's gateway-configured model. Deleting the
-   * field would be a schema/UI change in the routines surface; silently pretending to honour
-   * it would be worse than saying so here.
+   * Passed to the Rem runtime contract.
    */
   model?: string;
-  /** Whose gateway runs the turn. Without it there is no runtime and the run cannot proceed. */
-  userId?: string;
   /** Stable session key so a task/routine's runs thread into ONE loadable chat. */
   sessionKey?: string;
+  /** Transitional escape hatch only for flows already authorized to act. */
+  allowLegacyByokFallback?: boolean;
+  /** Separate recovery namespace; legacy gateway turns must never write canonical Rem sessions. */
+  legacyByokFallbackSessionKey?: string;
+  /** Transitional callers that still require tools route directly to their existing adapter. */
+  toolPolicy?: RuntimeToolPolicy;
 }
+
+export type AgentRunOpts = AgentRunSharedOpts & (
+  | { userId?: undefined; authority?: never; idempotencyKey?: never; toolPolicy?: never }
+  | {
+      /** Authenticated owner used for tenant routing. */
+      userId: string;
+      /** Authority established by the caller, never inferred or minted here. */
+      authority: RuntimeAuthority;
+      /** Stable id of this logical dispatch. */
+      idempotencyKey: string;
+    }
+);
 
 export interface AgentTaskInput {
   id?: string;
@@ -135,7 +113,7 @@ export interface AgentRunResult {
    */
   taskContext?: string;
   /**
-   * True when the result is a degraded fallback (no gateway / unreachable / timed out)
+   * True when the result is a degraded fallback (unavailable / cancelled / timed out)
    * rather than a real agent reply. A structured signal so callers (route run-state,
    * routine confidence gate) don't string-match the ⚠️ glyph.
    */
@@ -158,30 +136,47 @@ export interface AgentRunResult {
    * row is what the user reads, but the client must choose its copy and its call to action
    * from THIS field: a Rem-managed user out of quota is told to upgrade, a BYOK user with a
    * rejected key is told to fix the key, and those cannot be told apart from a sentence.
-   * `gatewayFailureBody` is retained only so an older client that ignores this field still
+   * `runtimeFailureBody` is retained so an older client that ignores this field still
    * renders something honest.
    */
   runBlock?: RunBlock;
+  /** Runtime evidence returned by the implementation that actually handled the turn. */
+  runtime?: AgentRuntimeProvenance;
+  /** Exact Rem-runtime reporting call that proposed the status this route may apply. */
+  taskUpdateProposal?: {
+    runtimeRunId: string;
+    toolCallId: string;
+  };
 }
 
-/** What the user sees when they have no gateway to run on. Actionable, not a shrug. */
-export const NO_GATEWAY_BODY =
-  '⚠️ This run needs your own Rem gateway, and this account does not have one yet. ' +
-  'Finish gateway setup in Settings, then run this task again.';
+/** What the user sees when no runtime can be selected for the account. */
+export const NO_RUNTIME_BODY =
+  '⚠️ Rem is not ready to run this task for this account yet. Try again after setup finishes.';
 
-/** What the user sees when their gateway exists but could not take the turn. */
-export function gatewayFailureBody(reason: string): string {
-  if (reason === 'wake_failed') {
-    return '⚠️ Your Rem gateway did not wake up in time, so this run did not happen. ' +
-      'No changes were made — try running it again in a moment.';
+/** Transitional source compatibility for callers that still use the old symbol. */
+export const NO_GATEWAY_BODY = NO_RUNTIME_BODY;
+
+/** What the user sees when the selected runtime could not take the turn. */
+export function runtimeFailureBody(reason: string): string {
+  if (reason === 'quota_exhausted') {
+    return '⚠️ You have used the model requests included in your current plan. Upgrade or wait for your allowance to reset, then run this task again.';
+  }
+  if (reason === 'credential_rejected') {
+    return '⚠️ Rem’s model provider credential is temporarily unavailable, so this run did not happen. No changes were made — try again later.';
+  }
+  if (reason === 'startup_failed') {
+    return '⚠️ Rem could not become ready in time, so this run did not happen. ' +
+      'No changes were made — try again in a moment.';
   }
   if (reason === 'timeout') {
-    return '⚠️ This run took longer than the time allowed and was stopped. No changes were ' +
-      'made; you can run it again.';
+    return '⚠️ This run took longer than allowed and Rem confirmed it was stopped. You can run it again.';
   }
-  return '⚠️ Your Rem gateway could not run this task just now. No changes were made; you ' +
-    'can run it again.';
+  if (reason === 'cancelled') return '⚠️ This run was cancelled before it completed.';
+  return '⚠️ Rem could not confirm how this run ended. Check the task before trying again.';
 }
+
+/** Transitional source compatibility for routes not yet migrated to the runtime vocabulary. */
+export const gatewayFailureBody = runtimeFailureBody;
 
 const SYSTEM_PROMPT =
   "You are Rem's task agent, working on ONE task for the person who owns this device. " +
@@ -229,7 +224,7 @@ export function buildUserPrompt(
  *
  * The tool call wins over the envelope whenever both are present. That ordering is the point
  * of the design and not a tie-break detail: the tool call's arguments were schema-validated
- * by the gateway before the tool ran, whereas the envelope is a line the model typed. When
+ * by a tool-capable runtime before the tool ran, whereas the envelope is a line the model typed. When
  * the day comes that both exist, the validated one is the answer.
  *
  * Exported so a test can drive the precedence directly rather than inferring it.
@@ -250,7 +245,14 @@ export function resolveRunVerdict(turn: {
 
   // The envelope line is stripped from the body even when the tool call supplied the
   // verdict: a machine line is never shown to the user, whoever won.
-  const reply = runCommentBody(fromEnvelope.body);
+  // A schema-validated report carries the activity-feed explanation itself. This also keeps
+  // tool-only completions actionable; legacy status-only tool carriers retain their prose path.
+  // Treat the comment as prose only: strip any embedded envelope line but never read its verdict,
+  // because the already-normalized tool arguments remain the sole authoritative machine decision.
+  const replySource = fromToolCall?.comment
+    ? readVerdictFromReply(fromToolCall.comment).body
+    : fromEnvelope.body;
+  const reply = runCommentBody(replySource);
   // `task_context` may ride on the verdict or on its own legacy marker line. The verdict's
   // copy wins; the marker remains for run paths that have not been migrated.
   //
@@ -272,34 +274,11 @@ export function resolveRunVerdict(turn: {
 }
 
 /**
- * Run the task agent against a task + its comments on the OWNER'S gateway.
+ * Run the task agent against a task + its comments on the owner's selected Rem runtime.
  *
  * Never throws — on any failure it returns a labelled `errored` result, so the route can
  * always persist a comment and return 201.
  */
-/**
- * The mode, resolved so that THIS file's never-throw contract does not depend on another file
- * keeping its own.
- *
- * `resolveModelRuntimeMode` is documented never-throws and implements that. But it is awaited
- * from inside `runAgentOnTask`'s catch block, where a rejection has nowhere left to go: the
- * handler that would have caught it is the one already running. A route that guards its call
- * would still survive, but `runAgentOnTask`'s contract says the guard should never be needed,
- * and a contract that holds only because a different module is currently well-behaved is not a
- * contract. One local try/catch makes it structural.
- */
-async function safeRuntimeMode(userId: string): Promise<ModelRuntimeMode> {
-  try {
-    return await resolveModelRuntimeMode(userId);
-  } catch (error: unknown) {
-    console.warn(
-      '[TASK-AGENT] mode lookup threw, reporting unknown:',
-      error instanceof Error ? error.message : String(error),
-    );
-    return 'unknown';
-  }
-}
-
 export async function runAgentOnTask(
   task: AgentTaskInput,
   comments: AgentCommentInput[],
@@ -307,10 +286,10 @@ export async function runAgentOnTask(
   opts: AgentRunOpts = {},
 ): Promise<AgentRunResult> {
   if (!opts.userId) {
-    // No user, so no gateway and no mode to read. `unknown` is the honest mode here — this is
+    // No user, so no runtime and no mode to read. `unknown` is the honest mode here — this is
     // the one blocked path where we genuinely cannot say whose key would have paid.
     return {
-      reply: NO_GATEWAY_BODY,
+      reply: NO_RUNTIME_BODY,
       errored: true,
       verdictSource: 'none',
       runBlock: { code: 'runtime_unavailable', mode: 'unknown' },
@@ -320,41 +299,91 @@ export async function runAgentOnTask(
 
   try {
     const message = `${SYSTEM_PROMPT}\n\n${buildUserPrompt(task, comments, instruction)}`;
-    const turn = await runAgentTurnOnGateway({
-      userId,
+    const baseTurnOptions = {
+      principal: {
+        userId,
+        authority: opts.authority,
+      },
       sessionKey: opts.sessionKey ?? `rem-task-${task.id ?? 'adhoc'}`,
+      idempotencyKey: opts.idempotencyKey,
       message,
-    });
+      ...(opts.model ? { model: opts.model } : {}),
+    } as const;
+    const sharedTurnOptions = {
+      ...baseTurnOptions,
+      // Reporting a verdict is structured output, not an external action. The route remains
+      // the sole task mutator, so this observe turn needs neither a grant nor a gateway.
+      toolPolicy: {
+        mode: 'observe',
+        allowedTools: [TASK_VERDICT_TOOL_NAME],
+        approval: 'none',
+      },
+    } as const;
+    let turn = opts.toolPolicy
+      ? await runAgentTurn({ ...baseTurnOptions, toolPolicy: opts.toolPolicy })
+      : await runAgentTurnOnSharedRuntime(sharedTurnOptions);
+    // BYOK credentials are still gateway-owned during migration. Preserve that supported
+    // path only when the shared runtime returns durable payer provenance proving this is a
+    // BYOK account; generic/unattributed failures must never wake a gateway by accident.
+    if (
+      !opts.toolPolicy &&
+      opts.allowLegacyByokFallback === true &&
+      !turn.ok &&
+      turn.reason === 'unavailable' &&
+      turn.provenance.billingMode === 'byok'
+    ) {
+      turn = await runAgentTurn({
+        ...baseTurnOptions,
+        sessionKey: opts.legacyByokFallbackSessionKey ?? baseTurnOptions.sessionKey,
+        toolPolicy: {
+          mode: 'act',
+          allowedTools: ['*'],
+          approval: opts.authority === 'trusted_automation'
+            ? 'automation_policy'
+            : 'interactive_user',
+        },
+      });
+    }
 
     if (!turn.ok) {
-      const body =
-        turn.reason === 'no_gateway' ? NO_GATEWAY_BODY : gatewayFailureBody(turn.reason);
-      // The mode is resolved ONLY on the failure path. On a successful run it tells the client
-      // nothing it can act on, and reading it would put an extra query on every run.
+      const body = turn.userMessage ??
+        (turn.reason === 'unavailable' ? NO_RUNTIME_BODY : runtimeFailureBody(turn.reason));
       return {
         reply: body,
         errored: true,
         verdictSource: 'none',
+        runtime: turn.provenance,
         runBlock: {
-          code: blockCodeForGatewayFailure(turn.reason),
-          mode: await safeRuntimeMode(userId),
+          code: blockCodeForRuntimeFailure(turn.reason),
+          mode: turn.provenance.billingMode,
         },
       };
     }
 
-    return resolveRunVerdict(turn);
+    const resolved = resolveRunVerdict(turn);
+    const reportCall = readTaskVerdictToolCall(turn.toolCalls);
+    return {
+      ...resolved,
+      runtime: turn.provenance,
+      ...(turn.provenance.persistenceKind === 'rem_runtime' && reportCall
+        ? {
+            taskUpdateProposal: {
+              runtimeRunId: turn.runId,
+              toolCallId: reportCall.toolCallId ?? TASK_VERDICT_TOOL_NAME,
+            },
+          }
+        : {}),
+    };
   } catch (error: unknown) {
-    // runAgentTurnOnGateway is itself never-throws, so reaching here means something below
-    // it broke unexpectedly. Log and degrade rather than 500 a run.
+    // Runtime adapters are expected to contain transport errors. Keep this catch because a future
+    // implementation must not be able to turn an adapter-contract violation into a route 500.
     const message = error instanceof Error ? error.message : String(error);
     console.error('[TASK-AGENT] runAgentOnTask failed:', message);
     return {
-      reply: gatewayFailureBody('error'),
+      reply: runtimeFailureBody('error'),
       errored: true,
       verdictSource: 'none',
-      // `safeRuntimeMode` cannot reject, which matters here specifically: this IS the catch, so
-      // a rejection would escape the function entirely and break the never-throw contract.
-      runBlock: { code: 'runtime_error', mode: await safeRuntimeMode(userId) },
+      runBlock: { code: 'runtime_error', mode: 'unknown' },
     };
   }
 }

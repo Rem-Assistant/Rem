@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Unified settings view used by both iOS and macOS.
 /// Generic over `GatewaySessionProviding` so it works with either session manager.
-struct SharedSettingsView<Gateway: GatewaySessionProviding, PermissionsView: View, AboutView: View>: View {
+struct SharedSettingsView<Gateway: GatewaySessionProviding, PermissionsView: View, BillingView: View, AboutView: View>: View {
     let gateway: Gateway
 
     /// Callbacks for platform-specific actions
@@ -18,6 +18,7 @@ struct SharedSettingsView<Gateway: GatewaySessionProviding, PermissionsView: Vie
 
     /// Platform-specific detail views
     @ViewBuilder var permissionsView: () -> PermissionsView
+    @ViewBuilder var billingView: () -> BillingView
     @ViewBuilder var aboutView: () -> AboutView
     /// Gateway-scoped backup/restore lives under Gateway Detail. Root Settings
     /// stays account/app-scoped so platform-specific gateway tools do not look
@@ -68,20 +69,20 @@ struct SharedSettingsView<Gateway: GatewaySessionProviding, PermissionsView: Vie
         // place to configure Rem, rather than one peer in a long root list.
         Section {
             NavigationLink {
-                SharedOpenClawGatewayHomeView(
+                SharedRemGatewayHomeView(
                     gateway: gateway,
                     backupView: gatewayBackupView
                 )
             } label: {
                 HStack(spacing: 12) {
-                    OpenClawRuntimeIcon()
+                    RemRuntimeIcon()
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("OpenClaw")
+                        Text("Rem")
                         connectionBadge
                     }
                 }
             }
-            .accessibilityLabel("Agent settings, OpenClaw, \(gateway.connectionState.shortStatusText)")
+            .accessibilityLabel("Agent settings, Rem, \(gateway.connectionState.shortStatusText)")
             .accessibilityHint("Opens settings for your agent runtime")
         } header: {
             Text("Your agent runtime")
@@ -93,6 +94,14 @@ struct SharedSettingsView<Gateway: GatewaySessionProviding, PermissionsView: Vie
             // Cloud browser moved to Agent settings → Connectivity (it's an agent capability, not a
             // global app preference). See SharedGatewayDetailView.
 
+            NavigationLink {
+                billingDestination
+            } label: {
+                HStack(spacing: 12) {
+                    SettingsIcon(icon: "creditcard.fill", color: .blue)
+                    Text("Billing & Usage")
+                }
+            }
             // Provider Keys (BYOK) moved to Agents → Controls: provider auth
             // belongs to the agent runtime, not Billing. See
             // SharedGatewayDetailView's Controls section.
@@ -335,6 +344,11 @@ struct SharedSettingsView<Gateway: GatewaySessionProviding, PermissionsView: Vie
     }
 
     // MARK: - Platform-specific destinations
+
+    @ViewBuilder
+    private var billingDestination: some View {
+        billingView()
+    }
 
     @ViewBuilder
     private var permissionsDestination: some View {

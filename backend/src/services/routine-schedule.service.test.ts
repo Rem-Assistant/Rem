@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
+vi.mock('./routine-policy-lock.service.js', () => ({
+  withRoutinePolicyLock: async (_routineId: string, work: () => Promise<unknown>) => work(),
+}));
 
 // CRUD no longer touches the gateway: scheduling is backend-driven (run-routines.ts
 // reads the row at run time), so there is nothing to stub beyond the DB pool.
@@ -165,9 +168,20 @@ describe('createRoutine', () => {
 
     const [sql, params] = poolMock.query.mock.calls[0];
     expect(sql).toContain('INSERT INTO routine_schedules');
+    expect(sql).toContain('task.user_id = $1::uuid');
     expect(sql).toContain(ROUTINE_RETURNING);
     // user_id, task_id, cadence, delivery_hour, timezone, prompt, autonomy, model, enabled
     expect(params).toEqual([USER_ID, TASK_ID, 'daily', 7, 'America/Los_Angeles', null, 1, null, true]);
+  });
+
+  it('returns null instead of binding a routine to an unowned task', async () => {
+    poolMock.query.mockResolvedValueOnce({ rows: [] });
+
+    await expect(createRoutine(USER_ID, {
+      taskId: TASK_ID,
+      deliveryHour: 7,
+      timezone: 'UTC',
+    })).resolves.toBeNull();
   });
 
   it('clamps autonomy into the ladder range', async () => {

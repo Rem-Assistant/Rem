@@ -366,7 +366,7 @@ router.post('/patch-config', requireJwt, async (req: Request, res: Response) => 
 // MEMORY.md / memory/*.md on the gateway's /data/workspace) so the app's
 // Settings → Memory screen can show the real files the runtime uses to
 // understand the user. These live on the persistent Fly volume and survive
-// image patching (the managed deploy pipeline reconfigures rather than re-onboards).
+// image patching (deploy.service.ts reconfigures rather than re-onboards).
 //
 // Reading requires the setup password (the wrapper's workspace endpoints use
 // Basic auth). If it's unavailable (e.g. local gateway), we return 200 with an
@@ -423,6 +423,25 @@ router.get('/gateway/workspace/file', requireJwt, async (req: Request, res: Resp
     }
     console.error(`[gateway] workspace/file error: ${e.message}`);
     return res.status(502).json({ error: 'Couldn’t reach your gateway to read this file. Try again in a moment.' });
+  }
+});
+
+// ─── Pool management (service-token protected) ──────────────────────────────
+
+router.post('/pool/replenish', async (req: Request, res: Response) => {
+  const token = req.headers['x-service-token'] || req.headers.authorization?.replace('Bearer ', '');
+  if (!token || token !== env.BACKEND_SERVICE_TOKEN) {
+    return res.status(401).json({ error: 'Invalid service token' });
+  }
+  try {
+    const targetSize = parseInt(req.body?.targetSize) || 2;
+    const { replenishPool, cleanupStaleEntries } = await import('../services/pool.service.js');
+    await cleanupStaleEntries();
+    const result = await replenishPool(targetSize);
+    return res.json({ ok: true, ...result });
+  } catch (e: any) {
+    console.error(`[gateway] pool replenish error: ${e.message}`);
+    return res.status(500).json({ error: e.message || 'Failed to replenish pool' });
   }
 });
 

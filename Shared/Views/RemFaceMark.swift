@@ -6,7 +6,7 @@ import SwiftUI
 // rounded-rect eyes and a smile. Shared across iOS + macOS and both platforms'
 // shared views (empty state, thinking indicator). The `CustomFaceShape` outline
 // lives here so the voice `RemAnimatedFaceView` (iOS-only, in
-// `RemClaw/Sources/Voice/CustomFaceShape.swift`) and every shared surface draw
+// `Rem/Sources/Voice/CustomFaceShape.swift`) and every shared surface draw
 // the same mark.
 
 // MARK: - Face Outline Shape

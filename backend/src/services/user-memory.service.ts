@@ -77,7 +77,7 @@ export async function listMemories(userId: string): Promise<MemoryRow[]> {
   const result = await pool.query(
     `SELECT ${MEMORY_RETURNING} FROM user_memory
       WHERE user_id = $1::uuid
-      ORDER BY created_at DESC`,
+      ORDER BY created_at DESC, id ASC`,
     [userId],
   );
   return result.rows.map(formatMemory);
@@ -162,10 +162,26 @@ export async function updateMemory(
   fact: string,
 ): Promise<MemoryRow | null> {
   const result = await pool.query(
-    `UPDATE user_memory
-        SET fact = $1, updated_at = NOW()
-      WHERE id = $2::uuid AND user_id = $3::uuid
-      RETURNING ${MEMORY_RETURNING}`,
+    `WITH updated AS (
+       UPDATE user_memory
+          SET fact = $1, updated_at = NOW()
+        WHERE id = $2::uuid AND user_id = $3::uuid
+        RETURNING ${MEMORY_RETURNING}
+     ), purged_terminal_runtime_copies AS (
+       DELETE FROM rem_agent_runs
+        WHERE user_id = $3::uuid
+          AND session_key LIKE 'rem-memory-%'
+          AND state <> 'running'
+          AND EXISTS (SELECT 1 FROM updated)
+     ), expiring_active_runtime_copies AS (
+       UPDATE rem_agent_runs
+          SET expires_at = NOW(), updated_at = NOW()
+        WHERE user_id = $3::uuid
+          AND session_key LIKE 'rem-memory-%'
+          AND state = 'running'
+          AND EXISTS (SELECT 1 FROM updated)
+     )
+     SELECT * FROM updated`,
     [fact, id, userId],
   );
   return result.rows.length ? formatMemory(result.rows[0]) : null;
@@ -174,7 +190,23 @@ export async function updateMemory(
 /** Delete a fact (scoped to the user). Returns true if a row was deleted. */
 export async function deleteMemory(userId: string, id: string): Promise<boolean> {
   const result = await pool.query(
-    `DELETE FROM user_memory WHERE id = $1::uuid AND user_id = $2::uuid RETURNING id`,
+    `WITH deleted AS (
+       DELETE FROM user_memory WHERE id = $1::uuid AND user_id = $2::uuid RETURNING id
+     ), purged_terminal_runtime_copies AS (
+       DELETE FROM rem_agent_runs
+        WHERE user_id = $2::uuid
+          AND session_key LIKE 'rem-memory-%'
+          AND state <> 'running'
+          AND EXISTS (SELECT 1 FROM deleted)
+     ), expiring_active_runtime_copies AS (
+       UPDATE rem_agent_runs
+          SET expires_at = NOW(), updated_at = NOW()
+        WHERE user_id = $2::uuid
+          AND session_key LIKE 'rem-memory-%'
+          AND state = 'running'
+          AND EXISTS (SELECT 1 FROM deleted)
+     )
+     SELECT id FROM deleted`,
     [id, userId],
   );
   return result.rows.length > 0;

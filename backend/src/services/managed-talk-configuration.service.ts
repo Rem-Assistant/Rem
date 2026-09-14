@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { buildGatewayConfigPatch, DEFAULT_TALK_PROVIDER_ID } from '../config/gateway-defaults.js';
 import { env } from '../config/env.js';
-import { getHostedGatewayProvisioning } from './gateway/hosted-provisioning.js';
+import * as flyService from './fly.service.js';
 import { assertManagedGatewayOwnership } from './gateway-environment-ownership.service.js';
 import {
   tryWithUserGatewayLifecycleMutationLock,
@@ -14,7 +14,7 @@ import {
   withGatewayRequester,
 } from './gateway-pair.service.js';
 import * as gatewayService from './gateway.service.js';
-import { getEntitlementProvider } from './entitlement/entitlement-provider.js';
+import { getCanonicalEntitlementWithClient } from './iap/iap-identity.service.js';
 
 export type ManagedTalkConfigurationOutcome =
   | 'already_configured'
@@ -122,7 +122,7 @@ export async function inspectManagedTalkTarget(
   if (targetUrl.protocol !== 'https:' || targetUrl.hostname.toLowerCase() !== expectedHost || targetUrl.port) {
     throw new Error('managed gateway URL does not match the owned Fly app');
   }
-  const machine = await getHostedGatewayProvisioning().getMachine(appName, machineId);
+  const machine = await flyService.getMachine(appName, machineId);
   assertManagedGatewayOwnership(machine.config?.env, {
     userId,
     backendUrl: env.BACKEND_PUBLIC_URL,
@@ -224,7 +224,7 @@ export async function reconcileManagedTalkConfigurationWithClient(
   if (typeof inspected === 'string') return inspected;
 
   const [entitlement, credentialSnapshot] = await Promise.all([
-    getEntitlementProvider().getCanonicalEntitlement(lifecycleClient, userId),
+    getCanonicalEntitlementWithClient(lifecycleClient, userId),
     readTalkCredentialSnapshot(inspected),
   ]);
   const configuredKey = credentialSnapshot.managedProviderKey;

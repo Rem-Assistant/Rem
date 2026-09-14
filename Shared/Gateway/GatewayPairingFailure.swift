@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawKit
+import RemKit
 
 // MARK: - Pairing failure classification (#306 Pairing recovery UX epic)
 
@@ -17,7 +17,7 @@ import OpenClawKit
 /// - **Unknown** → fall back to existing behavior (auto-approve / reconnect)
 ///
 /// **Source of truth.** Classification delegates to the upstream
-/// `GatewayConnectionProblemMapper` (in OpenClawKit), which reads
+/// `GatewayConnectionProblemMapper` (in RemKit), which reads
 /// `GatewayConnectAuthError.detail` (typed `DEVICE_AUTH_*` code) and
 /// `detailsReason` ("scope-upgrade" / "role-upgrade" / "metadata-upgrade").
 /// We never substring-match `error.localizedDescription` for control flow —
@@ -30,7 +30,7 @@ import OpenClawKit
 /// guessing, so trust-revocation reasons that arrive only as strings stay
 /// in the safe fallback path instead of triggering an auto-reset.
 ///
-/// Originally defined in `RemClaw/Sources/Gateway/GatewayClient.swift` for
+/// Originally defined in `Rem/Sources/Gateway/GatewayClient.swift` for
 /// iOS use only (#306). Moved to Shared for #320 (Widen Mac operator scope
 /// to operator.admin) so the Mac session manager can consume the same
 /// classifier — the Mac needs the auto-re-pair path to handle scope-upgrade
@@ -59,7 +59,7 @@ enum GatewayPairingFailure: Equatable {
     }
 
     /// Map an upstream `GatewayConnectionProblem.Kind` to our local bucket.
-    /// Public for the unit tests under `RemClawTests/`.
+    /// Public for the unit tests under `RemTests/`.
     static func from(problemKind kind: GatewayConnectionProblem.Kind) -> GatewayPairingFailure {
         switch kind {
         case .pairingScopeUpgradeRequired: .scopeUpgrade

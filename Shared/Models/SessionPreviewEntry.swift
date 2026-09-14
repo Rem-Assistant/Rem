@@ -1,6 +1,6 @@
 import Foundation
-import OpenClawKit
-import OpenClawProtocol
+import RemKit
+import RemProtocol
 
 /// Redacted, UI-safe observability entry for the session preview feed.
 ///
@@ -205,7 +205,7 @@ public struct SessionPreviewEntry: Codable, Equatable, Identifiable, Sendable {
 
     public static func fromPendingTool(
         name: String,
-        args: OpenClawKit.AnyCodable?,
+        args: RemKit.AnyCodable?,
         toolCallId: String?,
         sessionId: String?,
         gatewayId: String? = nil,
@@ -421,7 +421,7 @@ public struct SessionPreviewEntry: Codable, Equatable, Identifiable, Sendable {
         return redactedSummary(stream) ?? "Session activity"
     }
 
-    private static func pendingToolData(name: String, args: OpenClawKit.AnyCodable?) -> [String: String] {
+    private static func pendingToolData(name: String, args: RemKit.AnyCodable?) -> [String: String] {
         var data = ["tool": name]
 
         for key in ["action", "command", "target", "app", "window", "url", "path", "node", "nodeId"] {
@@ -433,13 +433,13 @@ public struct SessionPreviewEntry: Codable, Equatable, Identifiable, Sendable {
         return data
     }
 
-    private static func stringArg(_ args: OpenClawKit.AnyCodable?, key: String) -> String? {
+    private static func stringArg(_ args: RemKit.AnyCodable?, key: String) -> String? {
         guard let args else { return nil }
         if let dict = args.value as? [String: Any],
            let value = dict[key] as? String {
             return value
         }
-        if let dict = args.value as? [String: OpenClawKit.AnyCodable],
+        if let dict = args.value as? [String: RemKit.AnyCodable],
            let value = dict[key]?.value as? String {
             return value
         }

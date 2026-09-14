@@ -1,6 +1,6 @@
 import Foundation
-import OpenClawChatUI
-import OpenClawKit
+import RemChatUI
+import RemKit
 
 /// The two product-level controls Rem exposes over OpenClaw's model visibility policy.
 ///
@@ -70,9 +70,9 @@ struct GatewayModelSettingsSnapshot: Equatable, Sendable {
     let allowlist: [String: JSONValue]?
     /// Full gateway catalog, including models currently hidden by an explicit allowlist. This is
     /// what lets a disabled managed model remain discoverable so its switch can be turned on again.
-    let configuredModels: [OpenClawChatModelChoice]
+    let configuredModels: [RemChatModelChoice]
     /// Models currently usable under the gateway's visibility policy.
-    let effectiveModels: [OpenClawChatModelChoice]
+    let effectiveModels: [RemChatModelChoice]
     let catalogAuthority: GatewayModelCatalogAuthority
     /// Catalog membership alone never authorizes Rem's managed model. This override is populated
     /// only from exact managed identity plus positive runtime-auth evidence. Legacy catalogs also
@@ -83,8 +83,8 @@ struct GatewayModelSettingsSnapshot: Equatable, Sendable {
         baseHash: String?,
         primaryModelRef: String?,
         allowlist: [String: JSONValue]?,
-        configuredModels: [OpenClawChatModelChoice],
-        effectiveModels: [OpenClawChatModelChoice],
+        configuredModels: [RemChatModelChoice],
+        effectiveModels: [RemChatModelChoice],
         catalogAuthority: GatewayModelCatalogAuthority = .completeMutable,
         legacyManagedModelRef: String? = nil
     ) {
@@ -100,7 +100,7 @@ struct GatewayModelSettingsSnapshot: Equatable, Sendable {
     /// Models appropriate for the read-only provider catalog below Rem's product-level switches.
     /// The managed provider is represented solely by the MiniMax M2.7 switch; leaking its sibling
     /// catalog entries would imply that Rem offers models the product has not enabled.
-    var userVisibleCatalogModels: [OpenClawChatModelChoice] {
+    var userVisibleCatalogModels: [RemChatModelChoice] {
         effectiveModels.filter {
             Self.normalizedRef($0.provider) != Self.normalizedRef(Self.managedProviderID)
         }
@@ -164,7 +164,7 @@ struct GatewayModelSettingsSnapshot: Equatable, Sendable {
         return refs
     }
 
-    static func isMiniMax(_ choice: OpenClawChatModelChoice) -> Bool {
+    static func isMiniMax(_ choice: RemChatModelChoice) -> Bool {
         normalizedRef(choice.provider) == normalizedRef(managedProviderID) &&
             normalizedRef(choice.modelID) == normalizedRef(managedModelID) &&
             isManagedMiniMaxRef(choice.selectionID)
@@ -527,9 +527,9 @@ struct GatewayModelSettingsClient {
             // every mutation disabled until both views affirm completeness.
             catalogAuthority = .legacyReadOnly
         }
-        let makeChoices: (ModelsListPayload) -> [OpenClawChatModelChoice] = { payload in
+        let makeChoices: (ModelsListPayload) -> [RemChatModelChoice] = { payload in
             payload.models.map { item in
-                OpenClawChatModelChoice(
+                RemChatModelChoice(
                     modelID: item.id,
                     name: ModelUserFacingCopy.modelName(item.name),
                     provider: item.provider,
@@ -565,7 +565,7 @@ struct GatewayModelSettingsClient {
     /// only use exact config structure because their rows can be partial or stale.
     private func authorizedManagedModelRef(
         from response: ConfigGetResponse,
-        configuredModels: [OpenClawChatModelChoice],
+        configuredModels: [RemChatModelChoice],
         catalogAuthority: GatewayModelCatalogAuthority,
         runtimeConfiguredProviderIDs: [String]
     ) -> String? {
@@ -813,7 +813,7 @@ struct GatewayModelSettingsClient {
         let config = try JSONDecoder().decode(ConfigGetResponse.self, from: configData)
         let allowlist = config.config?.agents?.defaults?.models
         let primary = config.config?.agents?.defaults?.primaryModelRef
-        let effectiveModels: [OpenClawChatModelChoice]
+        let effectiveModels: [RemChatModelChoice]
         if let allowlist, !allowlist.isEmpty {
             effectiveModels = base.configuredModels.filter { choice in
                 ModelAllowlistMatcher.allows(choice.selectionID, keys: allowlist.keys) ||

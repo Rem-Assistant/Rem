@@ -3,14 +3,14 @@
  * unit test (orchestrator-sweep.service.test.ts), this runs every migration against a
  * REAL database and exercises the actual INSERT/UPDATE the sweep performs — so it would
  * have caught the CHECK-constraint violation the mocked test could not (the sweep writes
- * `task_comments.runtime = 'gateway'`, which migration 015's constraint rejected until
- * migration 031 widened it).
+ * status, comment, task context, grant, and effect settlement as one audited product outcome.
  *
  * Guarded on TEST_DATABASE_URL (same convention as usage.integration.test.ts): only runs
  * under `npm run test:integration` with a throwaway Postgres pointed at by that env var.
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
@@ -50,13 +50,46 @@ async function seedTask(overrides: { title?: string; startDate?: Date } = {}): P
   return rows[0].id.toString();
 }
 
-/** A stub gateway agent — no real gateway needed to exercise the persistence paths. */
+/** A provider stub that persists the exact observe-run evidence the real runtime would return. */
 const okAgent = (
   reply: string,
-  proposedStatus: 'completed' | 'in_progress' | 'blocked' | null,
+  proposedStatus: 'pending' | 'completed' | 'in_progress' | 'blocked',
 ): import('./orchestrator-sweep.service.js').ReadyTaskAgentRunner => ({
-  async run() {
-    return { ok: true as const, reply, proposedStatus };
+  async run(input) {
+    const proposalRunId = randomUUID();
+    const toolCallId = `report-${proposalRunId}`;
+    await pool.query(
+      `INSERT INTO rem_agent_runs
+         (id, user_id, idempotency_key, request_fingerprint, session_key, authority,
+          tool_policy, state, owner_token, lease_expires_at, admitted_model, model,
+          result_text, tool_calls, completed_at)
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5, 'trusted_automation', $6::jsonb,
+               'succeeded', $7::uuid, NOW(), 'test-model', 'test-model', $8, $9::jsonb, NOW())`,
+      [
+        proposalRunId,
+        input.task.userId,
+        `proposal:${proposalRunId}`,
+        'a'.repeat(64),
+        input.sessionKey,
+        JSON.stringify({ mode: 'observe', allowedTools: ['rem_task_report'], approval: 'none' }),
+        randomUUID(),
+        reply,
+        JSON.stringify([{
+          name: 'rem_task_report',
+          toolCallId,
+          args: { status: proposedStatus, comment: reply, task_context: 'Prepared result.' },
+        }]),
+      ],
+    );
+    return {
+      ok: true as const,
+      reply,
+      proposedStatus,
+      taskContext: 'Prepared result.',
+      externalContentInfluenced: false,
+      proposalRunId,
+      toolCallId,
+    };
   },
 });
 const allowScreen = () => ({ denied: false as const, categories: [] });
@@ -73,12 +106,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pool.query('TRUNCATE TABLE task_comments, task_chat_messages, tasks, users RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE TABLE rem_tool_effects, rem_capability_grants, rem_agent_runs, task_comments, task_chat_messages, tasks, users RESTART IDENTITY CASCADE');
   await pool.end();
 });
 
 beforeEach(async () => {
-  await pool.query('TRUNCATE TABLE task_comments, task_chat_messages, tasks RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE TABLE rem_tool_effects, rem_capability_grants, rem_agent_runs, task_comments, task_chat_messages, tasks RESTART IDENTITY CASCADE');
   await pool.query(
     `INSERT INTO users (id, email) VALUES ($1::uuid, 'sweep-int@example.com')
      ON CONFLICT (id) DO NOTHING`,
@@ -87,7 +120,7 @@ beforeEach(async () => {
 });
 
 describe('orchestrator sweep against a real database', () => {
-  it('C1: writes a runtime=gateway comment (constraint allows it) and applies status atomically', async () => {
+  it('C1: commits Rem comment, context, status, grant, and audited effect atomically', async () => {
     const taskId = await seedTask();
 
     const result = await sweep.runReadyTask(
@@ -100,7 +133,7 @@ describe('orchestrator sweep against a real database', () => {
     expect(result.appliedStatus).toBe('completed');
     expect(result.commentId).not.toBeNull();
 
-    // The comment persisted with runtime='gateway' — the exact INSERT that threw before 031.
+    // The comment points at the canonical Rem transcript and retains the Undo target.
     const comment = (
       await pool.query(
         `SELECT runtime, session_id, proposed_status, previous_status, author_label
@@ -108,16 +141,43 @@ describe('orchestrator sweep against a real database', () => {
         [result.commentId],
       )
     ).rows[0];
-    expect(comment.runtime).toBe('gateway');
-    // H2: session_id is the loadable gateway session key, NOT a random backend runId.
+    expect(comment.runtime).toBe('rem_runtime');
     expect(comment.session_id).toBe(`rem-task-${taskId}`);
     expect(comment.proposed_status).toBe('completed');
     expect(comment.previous_status).toBe('pending'); // Undo target
+    expect(comment.author_label).toBe('Rem Orchestrator');
+
+    const transcript = (
+      await pool.query(
+        `SELECT role, content, run_id IS NOT NULL AS has_run_id
+           FROM task_chat_messages
+          WHERE task_id = $1::uuid AND user_id = $2::uuid
+          ORDER BY seq`,
+        [taskId, USER_ID],
+      )
+    ).rows;
+    expect(transcript).toEqual([
+      { role: 'user', content: 'Work on "Draft the Q3 outline" now.', has_run_id: true },
+      { role: 'assistant', content: 'Drafted the outline and prepared next steps.', has_run_id: true },
+    ]);
 
     // Status + terminal run_status were applied in the same transaction as the comment.
-    const t = (await pool.query('SELECT status, run_status FROM tasks WHERE id = $1::uuid', [taskId])).rows[0];
+    const t = (await pool.query('SELECT status, run_status, description FROM tasks WHERE id = $1::uuid', [taskId])).rows[0];
     expect(t.status).toBe('completed');
     expect(t.run_status).toBe('done');
+    expect(t.description).toContain('Prepared result.');
+    const effect = (await pool.query(
+      `SELECT e.state, e.approval_source, e.proposal_run_id IS NOT NULL AS has_proposal,
+              g.grant_authority
+         FROM rem_tool_effects e
+         JOIN rem_capability_grants g ON g.id = e.grant_id`,
+    )).rows[0];
+    expect(effect).toEqual({
+      state: 'succeeded',
+      approval_source: 'automation_policy',
+      has_proposal: true,
+      grant_authority: 'internal_service',
+    });
   });
 
   it('H3: reaps a claim stranded running past the stale threshold back to NULL', async () => {
@@ -147,6 +207,62 @@ describe('orchestrator sweep against a real database', () => {
     expect(await sweep.reapStaleRunningClaims(NOW)).toBe(0);
   });
 
+  it('H3: does not reap a stale claim while its audited task effect is unresolved', async () => {
+    const taskId = await seedTask();
+    const stale = new Date(NOW.getTime() - (sweep.STALE_CLAIM_MINUTES + 5) * 60_000);
+    await pool.query(
+      `UPDATE tasks SET run_status = 'running', run_id = 'ambiguous-run',
+              run_started_at = $2::timestamptz
+        WHERE id = $1::uuid`,
+      [taskId, stale.toISOString()],
+    );
+    const grantId = randomUUID();
+    await pool.query(
+      `INSERT INTO rem_capability_grants
+         (id, user_id, capability_key, tool_name, scope_kind, approval_source,
+          grant_authority, scope_fingerprint)
+       VALUES ($1::uuid, $2::uuid, 'tasks.write', 'tasks.update', 'persistent',
+               'automation_policy', 'internal_service', $3)`,
+      [grantId, USER_ID, 'b'.repeat(64)],
+    );
+    const effectId = randomUUID();
+    await pool.query(
+      `INSERT INTO rem_tool_effects
+         (id, user_id, admitted_run_id, grant_id, idempotency_key,
+          request_fingerprint, session_key, tool_call_id, connector, capability_key,
+          tool_name, approval_source, scope_fingerprint, state, owner_token,
+          lease_expires_at, target_summary, risk_level, approved_at, started_at)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6,
+               $7, 'ambiguous-call', 'Rem Tasks', 'tasks.write', 'tasks.update',
+               'automation_policy', $6, 'running', $8::uuid,
+               NOW() + INTERVAL '5 minutes', $9, 'medium', NOW(), NOW())`,
+      [
+        effectId,
+        USER_ID,
+        randomUUID(),
+        grantId,
+        `ambiguous-effect:${effectId}`,
+        'b'.repeat(64),
+        `rem-task-${taskId}`,
+        randomUUID(),
+        `Update task ${taskId}`,
+      ],
+    );
+
+    expect(await sweep.reapStaleRunningClaims(NOW)).toBe(0);
+    expect((await pool.query('SELECT run_status FROM tasks WHERE id = $1::uuid', [taskId])).rows[0].run_status)
+      .toBe('running');
+
+    await pool.query(
+      `UPDATE rem_tool_effects
+          SET state = 'failed', completed_at = NOW(), result_summary = 'Not committed',
+              failure_code = 'task_update_not_committed'
+        WHERE id = $1::uuid`,
+      [effectId],
+    );
+    expect(await sweep.reapStaleRunningClaims(NOW)).toBe(1);
+  });
+
   it('M4: caps per user in SQL so one backlog can not consume every global slot', async () => {
     // Seed more due tasks for this user than the per-user cap allows.
     for (let i = 0; i < sweep.MAX_TASKS_PER_USER + 3; i++) {
@@ -173,7 +289,7 @@ describe('orchestrator sweep against a real database', () => {
     const comment = (
       await pool.query('SELECT runtime, previous_status FROM task_comments WHERE id = $1::uuid', [result.commentId])
     ).rows[0];
-    expect(comment.runtime).toBe('gateway');
+    expect(comment.runtime).toBe('rem_runtime');
     expect(comment.previous_status).toBeNull(); // nothing applied → no Undo
   });
 });

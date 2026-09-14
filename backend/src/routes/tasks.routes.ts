@@ -1,13 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import type { PoolClient } from 'pg';
 import { requireJwt } from '../middleware/auth.js';
-import { pool } from '../db/pool.js';
+import { pool, taskConversationPool } from '../db/pool.js';
 import {
   gatewayFailureBody,
   runAgentOnTask,
   type AgentRunResult,
 } from '../services/task-agent.service.js';
+import { runAgentTurnOnSharedRuntime } from '../runtime/agent-runtime.service.js';
+import { executeInteractiveTaskStatusProposal } from '../runtime/rem-task-tool-execution.js';
 import { listExistsForUser } from '../services/organization.service.js';
 import { taskSessionKey } from '../services/orchestrator-sweep.service.js';
 import {
@@ -18,11 +20,41 @@ import {
   MAX_USER_DESCRIPTION_CHARS,
   applyAgentTaskContext,
   splitDescription,
-  setUserSection,
   stripAgentBlockMarkers,
 } from '../services/task-description.service.js';
+import {
+  TaskUpdateValidationError,
+  updateTaskForUser,
+} from '../services/task-update.service.js';
 
 const router = Router();
+
+async function acquireTaskConversationTransaction(
+  lockKey: string,
+  signal?: AbortSignal,
+): Promise<PoolClient | null> {
+  if (signal?.aborted) return null;
+  const client = await taskConversationPool.connect();
+  try {
+    if (signal?.aborted) {
+      client.release();
+      return null;
+    }
+    await client.query('BEGIN');
+    const lock = await client.query(
+      `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired`,
+      [lockKey],
+    );
+    if (lock.rows[0]?.acquired === true && !signal?.aborted) return client;
+    await client.query('ROLLBACK');
+    client.release();
+    return null;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    client.release();
+    throw error;
+  }
+}
 
 // Statuses a comment may propose for its task. Mirrors the CHECK constraint in
 // migrations 015_create_task_comments.sql + 021_add_blocked_proposed_status.sql.
@@ -217,9 +249,8 @@ function formatComment(row: any) {
 const COMMENT_RETURNING =
   'id, task_id, author_kind, author_label, body, proposed_status, previous_status, runtime, session_id, run_block_code, run_block_mode, created_at';
 
-// Replayable task chat transcript (migration 025). A cloud run executes in the GMI
-// AgentBox namespace, never on the gateway, so its turns are not retrievable as a
-// gateway session — we persist them here keyed by task id + run id and serve them to
+// Replayable task chat transcript (migration 025). A Rem-runtime task run persists its
+// product-visible turns here keyed by task id + run id and serves them to
 // the device via GET /tasks/:id/chat so the task chat opens the REAL conversation
 // (the ask + Rem's reply) instead of an empty composer (#869 / #874).
 type ChatRole = 'user' | 'assistant' | 'tool';
@@ -236,6 +267,57 @@ function formatChatMessage(row: any) {
 }
 
 const CHAT_MESSAGE_RETURNING = 'id, task_id, role, content, run_id, created_at';
+const MAX_TASK_CHAT_MESSAGE_CHARS = 20_000;
+const MAX_TASK_CHAT_CONTEXT_CHARS = 24_000;
+const MAX_TASK_CHAT_CONTEXT_TURNS = 40;
+
+function taskChatContinuationPrompt(
+  task: any,
+  transcript: Array<{ role: ChatRole; content: string }>,
+  message: string,
+): string {
+  const recent = transcript.slice(-MAX_TASK_CHAT_CONTEXT_TURNS);
+  const lines: string[] = [];
+  let remaining = MAX_TASK_CHAT_CONTEXT_CHARS;
+  for (let index = recent.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const turn = recent[index];
+    const rendered = `${turn.role.toUpperCase()}: ${turn.content}`;
+    const bounded = rendered.slice(Math.max(0, rendered.length - remaining));
+    lines.unshift(bounded);
+    remaining -= bounded.length;
+  }
+
+  return [
+    "You are Rem, continuing one existing task conversation for its authenticated owner.",
+    'Reply directly and concisely to the latest user message. This is currently a tool-free',
+    'conversation: do not claim to have performed external actions or changed task state.',
+    `TASK TITLE: ${task.title ?? '(untitled)'}`,
+    `TASK STATUS: ${task.status ?? 'unknown'}`,
+    task.description_user ? `USER DESCRIPTION: ${task.description_user}` : null,
+    task.description_agent ? `CURRENT TASK CONTEXT: ${task.description_agent}` : null,
+    '',
+    'PRIOR CONVERSATION (oldest to newest):',
+    lines.length > 0 ? lines.join('\n') : '(none)',
+    '',
+    `LATEST USER MESSAGE: ${message}`,
+  ].filter((line) => line !== null).join('\n');
+}
+
+function taskChatFailure(reason: string): { status: number; message: string } {
+  if (reason === 'quota_exhausted') {
+    return {
+      status: 429,
+      message: 'You have used the model requests included in your current plan. Upgrade or wait for your allowance to reset, then try again.',
+    };
+  }
+  if (reason === 'timeout') {
+    return { status: 504, message: 'This reply took longer than allowed. Try again.' };
+  }
+  if (reason === 'cancelled') {
+    return { status: 409, message: 'This reply was cancelled before it completed.' };
+  }
+  return { status: 503, message: 'Rem is temporarily unavailable. Try again in a moment.' };
+}
 
 /**
  * Build the user-facing "ask" turn that opened a cloud run, so the persisted
@@ -259,7 +341,7 @@ function deriveRunAsk(
 }
 
 /**
- * Persist a cloud run's conversation turns as a replayable transcript (migration
+ * Persist a Rem-runtime run's conversation turns as a replayable transcript (migration
  * 025): the user ask + Rem's reply, stamped with the run id. Best-effort — wrapped so
  * a transcript-write failure never fails the agent-run response (same demo-safe
  * philosophy as the rest of this route).
@@ -524,82 +606,23 @@ router.patch('/tasks/:id', requireJwt, async (req: Request, res: Response) => {
   try {
     const userId = (req as Request & { userId: string }).userId;
     const body = req.body;
-    const timestampFields = new Set(['start_date', 'end_date', 'alert_time']);
-    const allowed = ['title', 'priority', 'status', 'start_date', 'end_date', 'duration_minutes', 'alert_time', 'repeat_frequency'];
-
-    // Validate + sanitize BEFORE opening a transaction, so a 400 never holds a row lock.
-    const userDescription = resolveUserDescription(body.description);
-
-    const setClauses: string[] = [];
-    const values: any[] = [];
-    let i = 1;
-
-    for (const key of allowed) {
-      if (body[key] !== undefined) {
-        const cast = timestampFields.has(key) ? '::timestamptz' : '';
-        setClauses.push(`${key} = $${i}${cast}`);
-        values.push(body[key]);
-        i++;
-      }
-    }
-
-    // Organization (migration 021): move the task between Lists (or null to unfile).
-    const listId = await resolveListId(userId, body.list_id);
-    if (listId !== undefined) {
-      setClauses.push(`list_id = $${i}::uuid`);
-      values.push(listId);
-      i++;
-    }
-
-    // Co-authored description: read the CURRENT stored value under a row lock, replace
-    // only the user's half, and let the merged text ride the same UPDATE as everything
-    // else — so the staleness reset below still covers it and cannot be forgotten.
-    if (userDescription !== undefined) {
-      client = await pool.connect();
-      await client.query('BEGIN');
-      const current = await client.query(
-        `SELECT description FROM tasks WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`,
-        [req.params.id, userId],
-      );
-      if (current.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'Task not found' });
-      }
-      setClauses.push(`description = $${i}`);
-      values.push(setUserSection(current.rows[0].description, userDescription));
-      i++;
-    }
-
-    if (setClauses.length === 0) {
-      if (client) await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'No fields to update' });
-    }
-    setClauses.push('updated_at = NOW()');
-    // THE USER TOUCHED THIS TASK, so it is not stale — clear the brief's nag counter and any
-    // `stale_at` marker (migration 116). Every user-facing task mutation funnels through this one
-    // route: retitling, re-prioritising, RESCHEDULING (start_date/end_date/alert_time), COMPLETING
-    // (status), changing the repeat rule, and re-filing into a list. Folding the reset into the
-    // SAME UPDATE, rather than issuing a second statement, means it is atomic with the edit and
-    // cannot be forgotten when a new patchable field is added to `allowed` above.
-    //
-    // A stale task the user edits therefore comes straight back into the brief on the next slot —
-    // "stale" is a pause on nagging, not a one-way door.
-    setClauses.push(...RESET_STALENESS_SET_CLAUSES);
-    values.push(req.params.id, userId);
-
-    const result = await (client ?? pool).query(
-      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${i}::uuid AND user_id = $${i + 1}::uuid RETURNING ${RETURNING}`,
-      values,
-    );
-    if (result.rows.length === 0) {
-      if (client) await client.query('ROLLBACK');
+    // Keep malformed descriptions out of a transaction. The canonical writer repeats the check
+    // because the hosted Rem tool calls it directly too.
+    resolveUserDescription(body.description);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const row = await updateTaskForUser(client, userId, req.params.id, body);
+    if (!row) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Task not found' });
     }
-    if (client) await client.query('COMMIT');
-    return res.json(formatTask(result.rows[0]));
+    await client.query('COMMIT');
+    return res.json(formatTask(row));
   } catch (error: any) {
     await client?.query('ROLLBACK').catch(() => {});
-    if (error.status === 400) return res.status(400).json({ error: error.message });
+    if (error.status === 400 || error instanceof TaskUpdateValidationError) {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('[TASKS] Error updating task:', error.message);
     res.status(500).json({ error: error.message || 'Failed to update task' });
   } finally {
@@ -613,9 +636,18 @@ router.patch('/tasks/:id', requireJwt, async (req: Request, res: Response) => {
 router.delete('/tasks/:id', requireJwt, async (req: Request, res: Response) => {
   let client: PoolClient | undefined;
   try {
-    client = await pool.connect();
+    // Deletion may wait for an active task conversation/model turn. Keep that wait on the
+    // deliberately isolated conversation pool so it cannot exhaust ordinary request capacity.
+    client = await taskConversationPool.connect();
     const userId = (req as Request & { userId: string }).userId;
     await client.query('BEGIN');
+    // Serialize with both task-chat continuation and manual task runs. Without this lock, a turn
+    // admitted between the purge below and commit could recreate task-derived runtime evidence
+    // after the task itself was gone.
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`task-chat:${userId}:${req.params.id.toLowerCase()}`],
+    );
     await client.query(
       `SELECT pg_advisory_xact_lock(
          hashtextextended($1::uuid::text || ':' || $2::uuid::text, 0)
@@ -625,6 +657,11 @@ router.delete('/tasks/:id', requireJwt, async (req: Request, res: Response) => {
     await client.query(
       `DELETE FROM tasks WHERE id = $1::uuid AND user_id = $2::uuid`,
       [req.params.id, userId],
+    );
+    await client.query(
+      `DELETE FROM rem_agent_runs
+        WHERE user_id = $1::uuid AND session_key = $2`,
+      [userId, taskSessionKey(req.params.id)],
     );
     await client.query(
       `INSERT INTO task_deletions (user_id, task_id, deleted_at)
@@ -763,15 +800,133 @@ router.get('/tasks/:id/chat', requireJwt, async (req: Request, res: Response) =>
 });
 
 /**
+ * POST /api/v1/tasks/:id/chat — continue a task conversation on Rem's shared runtime.
+ *
+ * The client supplies one stable UUID per logical send. The runtime ledger owns model-call
+ * idempotency; the partial unique transcript index from migration 128 owns product-history
+ * idempotency. A task-scoped advisory transaction lock keeps concurrent devices from forking
+ * the same conversation: each turn reads every previously committed turn before it runs.
+ */
+router.post('/tasks/:id/chat', requireJwt, async (req: Request, res: Response) => {
+  const userId = (req as Request & { userId: string }).userId;
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  const idempotencyKey = typeof req.body?.idempotency_key === 'string'
+    ? req.body.idempotency_key.trim().toLowerCase()
+    : '';
+  if (!message) return res.status(400).json({ error: 'Missing required field: message' });
+  if (message.length > MAX_TASK_CHAT_MESSAGE_CHARS) {
+    return res.status(400).json({ error: `message exceeds ${MAX_TASK_CHAT_MESSAGE_CHARS} characters` });
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(idempotencyKey)) {
+    return res.status(400).json({ error: 'idempotency_key must be a UUID' });
+  }
+
+  let client: PoolClient | null = null;
+  const abortController = new AbortController();
+  const abortIfDisconnected = () => {
+    if (!res.writableEnded) abortController.abort();
+  };
+  res.once('close', abortIfDisconnected);
+  try {
+    client = await acquireTaskConversationTransaction(
+      `task-chat:${userId}:${req.params.id.toLowerCase()}`,
+      abortController.signal,
+    );
+    if (!client) {
+      if (abortController.signal.aborted) return;
+      return res.status(409).json({ error: 'This task conversation is already running. Try again shortly.' });
+    }
+
+    const taskResult = await client.query(
+      `SELECT ${RETURNING} FROM tasks WHERE id = $1::uuid AND user_id = $2::uuid`,
+      [req.params.id, userId],
+    );
+    if (taskResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const existing = await client.query(
+      `SELECT ${CHAT_MESSAGE_RETURNING} FROM task_chat_messages
+        WHERE user_id = $1::uuid AND task_id = $2::uuid AND run_id = $3::uuid
+          AND role IN ('user', 'assistant')
+        ORDER BY seq ASC`,
+      [userId, req.params.id, idempotencyKey],
+    );
+    const existingUser = existing.rows.find((row: any) => row.role === 'user');
+    const existingAssistant = existing.rows.find((row: any) => row.role === 'assistant');
+    if (existingAssistant) {
+      if (!existingUser || existingUser.content !== message) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'idempotency_key was reused for a different task message' });
+      }
+      await client.query('COMMIT');
+      return res.status(200).json({
+        run_id: idempotencyKey,
+        session_key: taskSessionKey(req.params.id),
+        status: 'completed',
+        message: formatChatMessage(existingAssistant),
+      });
+    }
+
+    const transcriptResult = await client.query(
+      `SELECT role, content FROM task_chat_messages
+        WHERE task_id = $1::uuid AND user_id = $2::uuid ORDER BY seq ASC`,
+      [req.params.id, userId],
+    );
+    const task = formatTask(taskResult.rows[0]);
+    const sessionKey = taskSessionKey(req.params.id);
+    const result = await runAgentTurnOnSharedRuntime({
+      principal: { userId, authority: 'authenticated_user' },
+      message: taskChatContinuationPrompt(task, transcriptResult.rows, message),
+      requestIdentity: `task-chat:${req.params.id.toLowerCase()}:${createHash('sha256').update(message).digest('hex')}`,
+      sessionKey,
+      idempotencyKey,
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+      signal: abortController.signal,
+    });
+    if (!result.ok) {
+      await client.query('ROLLBACK');
+      const failure = taskChatFailure(result.reason);
+      return res.status(failure.status).json({ error: failure.message, reason: result.reason });
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO task_chat_messages (task_id, user_id, role, content, run_id)
+       VALUES ($1::uuid, $2::uuid, 'user', $3, $4::uuid),
+              ($1::uuid, $2::uuid, 'assistant', $5, $4::uuid)
+       ON CONFLICT (user_id, run_id, role)
+         WHERE run_id IS NOT NULL AND role IN ('user', 'assistant') DO NOTHING
+       RETURNING ${CHAT_MESSAGE_RETURNING}`,
+      [req.params.id, userId, message, idempotencyKey, result.text],
+    );
+    const assistant = inserted.rows.find((row: any) => row.role === 'assistant');
+    if (!assistant) throw new Error('Task chat continuation did not persist an assistant turn');
+    await client.query('COMMIT');
+    return res.status(201).json({
+      run_id: idempotencyKey,
+      session_key: sessionKey,
+      status: 'completed',
+      message: formatChatMessage(assistant),
+    });
+  } catch (error: any) {
+    if (client) await client.query('ROLLBACK').catch(() => undefined);
+    console.error('[TASKS] Error continuing task chat:', error.message);
+    return res.status(500).json({ error: error.message || 'Failed to continue task chat' });
+  } finally {
+    res.off('close', abortIfDisconnected);
+    client?.release();
+  }
+});
+
+/**
  * POST /api/v1/tasks/:id/comments — add a human comment to a task.
  * Body: { body, proposed_status? }. See docs/agentbox/CONTRACT.md §4.
  */
 router.post('/tasks/:id/comments', requireJwt, async (req: Request, res: Response) => {
+  let client: PoolClient | undefined;
   try {
     const userId = (req as Request & { userId: string }).userId;
-    const task = await loadOwnedTask(req.params.id, userId);
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-
     const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
     if (!body) return res.status(400).json({ error: 'Missing required field: body' });
 
@@ -782,7 +937,17 @@ router.post('/tasks/:id/comments', requireJwt, async (req: Request, res: Respons
       });
     }
 
-    const result = await pool.query(
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const task = await client.query(
+      `SELECT id FROM tasks WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`,
+      [req.params.id, userId],
+    );
+    if (!task.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    const result = await client.query(
       `INSERT INTO task_comments (task_id, user_id, author_kind, author_label, body, proposed_status)
        VALUES ($1::uuid, $2::uuid, 'user', 'You', $3, $4)
        RETURNING ${COMMENT_RETURNING}`,
@@ -792,16 +957,20 @@ router.post('/tasks/:id/comments', requireJwt, async (req: Request, res: Respons
     // route that inserts a comment with author_kind='user'; the agent's own comments are written by
     // the agent-run route and by the sweep, and those must NOT reset — Rem replying to itself
     // cannot be what earns a task three more chances to nag.
-    await resetTaskStaleness(userId, req.params.id);
+    await resetTaskStaleness(userId, req.params.id, client);
+    await client.query('COMMIT');
     return res.status(201).json(formatComment(result.rows[0]));
   } catch (error: any) {
+    await client?.query('ROLLBACK').catch(() => undefined);
     console.error('[TASKS] Error creating comment:', error.message);
     res.status(500).json({ error: error.message || 'Failed to create comment' });
+  } finally {
+    client?.release();
   }
 });
 
 /**
- * POST /api/v1/tasks/:id/agent-run — run the GMI AgentBox cloud agent against the
+ * POST /api/v1/tasks/:id/agent-run — run Rem's shared runtime against the
  * task + its comment thread, then persist the agent's reply as a cloud_agent comment.
  * Body: { instruction?, runtime? }. Always returns 201 with a comment — on service
  * failure it persists a clearly-labelled stub so the demo never hard-fails.
@@ -822,8 +991,14 @@ router.post('/tasks/:id/comments', requireJwt, async (req: Request, res: Respons
  * See docs/agentbox/CONTRACT.md §4 and §5.
  */
 router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Response) => {
+  const userId = (req as Request & { userId: string }).userId;
+  const conversationLockKey = `task-chat:${userId}:${req.params.id.toLowerCase()}`;
+  let conversationLock: PoolClient | null = null;
   try {
-    const userId = (req as Request & { userId: string }).userId;
+    conversationLock = await acquireTaskConversationTransaction(conversationLockKey);
+    if (!conversationLock) {
+      return res.status(409).json({ error: 'This task conversation is already running. Try again shortly.' });
+    }
     const task = await loadOwnedTask(req.params.id, userId);
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
@@ -843,9 +1018,9 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
     const runId = randomUUID();
     // Stamp the STABLE per-task session key (`rem-task-<taskId>`) so the client's
     // "Open conversation" jump (P2) has a handle to route to. Unlike run_id (which
-    // changes every run), session_key is stable across runs — the same helper the
-    // orchestrator sweep uses (taskSessionKey), so a manual run and a swept run land
-    // on the same continuation chat for a task. Stamping it at run START (not
+    // changes every run), session_key is stable across runs. The transitional
+    // orchestrator sweep deliberately uses a separate legacy recovery namespace so it
+    // cannot append gateway turns to this writable Rem conversation. Stamping it at run START (not
     // completion) means a run that fails mid-flight still leaves the key populated,
     // so a partially-run task isn't confusingly missing its conversation handle;
     // being stable, re-running never orphans a prior key. Idempotent on re-run.
@@ -870,18 +1045,16 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
 
     let agentResult: AgentRunResult;
     try {
-      // Run-now runs on the OWNER'S GATEWAY, like every other agent turn in this backend.
-      //
-      // This call previously withheld `userId` on purpose, under a comment claiming the
-      // AgentBox JSON path was "the only consumer of the structured `proposed_status`
-      // contract". That was checked and it was not so: `GMI_AGENTBOX_URL` is set nowhere in
-      // this repo's deploy, and the observed failure is a GMI 429 — i.e. the run was on
-      // `runViaGmiMaaS`, whose status signal was a regex over the model's prose. Withholding
-      // `userId` therefore protected nothing and billed the operator's shared org key for
-      // work metered to nobody. `task-verdict.ts` is the contract that actually replaces it.
+      // Run-now gives the model only the side-effect-free report tool. The route validates that
+      // proposal and, for an exact Rem-runtime call, delegates execution to the separately admitted
+      // audited tasks.update adapter. This needs neither a personal gateway nor model act authority.
       agentResult = await runAgentOnTask(formatTask(task), comments, instruction, {
         userId,
         sessionKey,
+        authority: 'authenticated_user',
+        idempotencyKey: runId,
+        allowLegacyByokFallback: true,
+        legacyByokFallbackSessionKey: `openclaw-manual-task-${req.params.id.toLowerCase()}`,
       });
     } catch (serviceError: any) {
       // runAgentOnTask is designed never to throw, but guard anyway so we always
@@ -921,25 +1094,107 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
     // an actual change — re-affirming the current status is a no-op, not an "apply".
     const previousStatus: string | null = task.status ?? null;
     const willApply = proposedStatus !== null && proposedStatus !== previousStatus;
-    const appliedStatus = willApply ? proposedStatus : null;
-    const commentPreviousStatus = willApply ? previousStatus : null;
+    const runBlockCode = agentResult.runBlock?.code ?? null;
+    const runBlockMode = agentResult.runBlock?.mode ?? null;
+    const runtime = agentResult.runtime?.persistenceKind ?? null;
+    let didApply = false;
+    let directAppliedStatus: string | null = null;
+    let auditedTaskRun: Record<string, any> | null = null;
+    let auditedComment: Record<string, any> | null = null;
+    if (willApply && agentResult.taskUpdateProposal) {
+      const appliedRunStatus = terminalRunStatus({
+        ...agentResult,
+        proposedStatus: proposedStatus!,
+      });
+      const executionInput = {
+        userId,
+        taskId: req.params.id,
+        status: proposedStatus!,
+        sessionKey,
+        proposalRunId: agentResult.taskUpdateProposal.runtimeRunId,
+        toolCallId: agentResult.taskUpdateProposal.toolCallId,
+        externalContentInfluenced: false,
+        productCompletion: {
+          expectedStatus: previousStatus ?? 'pending',
+          runStatus: appliedRunStatus,
+          runBlockCode,
+          runBlockMode,
+          commentBody: agentResult.reply,
+          proposedStatus: proposedStatus!,
+          previousStatus,
+          runtime: 'rem_runtime' as const,
+          sessionId: runId,
+          taskContext: agentResult.taskContext,
+        },
+      };
+      let execution;
+      try {
+        execution = await executeInteractiveTaskStatusProposal(executionInput);
+      } catch (executionError: unknown) {
+        // COMMIT may have reached PostgreSQL even when its acknowledgement was lost. Replay the
+        // exact effect identity before deciding whether any fallback product state is safe to write.
+        console.error(
+          '[TASKS] audited task status proposal failed:',
+          executionError instanceof Error ? executionError.message : String(executionError),
+        );
+        try {
+          execution = await executeInteractiveTaskStatusProposal(executionInput);
+        } catch (reconciliationError: unknown) {
+          console.error(
+            '[TASKS] audited task status reconciliation failed:',
+            reconciliationError instanceof Error
+              ? reconciliationError.message
+              : String(reconciliationError),
+          );
+          return res.status(503).json({
+            error: 'Task update outcome is still being verified',
+            retryable: true,
+          });
+        }
+      }
+      if (execution.kind === 'succeeded') {
+        if (!execution.comment) {
+          return res.status(503).json({
+            error: 'Task update outcome is still being verified',
+            retryable: true,
+          });
+        }
+        didApply = true;
+        auditedTaskRun = execution.task;
+        auditedComment = execution.comment;
+      } else if (execution.reason === 'effect_pending') {
+        // A running/uncertain effect is not evidence that the transaction failed. Its reconciler
+        // will prove non-commit before a future request may persist fallback review state.
+        return res.status(503).json({
+          error: 'Task update outcome is still being verified',
+          retryable: true,
+        });
+      }
+    } else if (willApply) {
+      // Transitional envelope and BYOK carriers retain their existing product behavior until
+      // they emit durable Rem proposal identity. Only schema-validated Rem tool calls enter the
+      // new grant/effect lifecycle in this slice.
+      directAppliedStatus = proposedStatus;
+      didApply = true;
+    }
+    const commentPreviousStatus = didApply ? previousStatus : null;
 
     // Terminal run-state from a structured mapping (not a string match on the reply).
     // Derive it from the post-suppression status so an event whose in_progress was
     // dropped doesn't land on a status it can't hold.
     const runStatus = terminalRunStatus({
       ...agentResult,
-      proposedStatus: proposedStatus ?? undefined,
+      proposedStatus: didApply ? proposedStatus ?? undefined : undefined,
     });
     // WHY THE RUN DID NOT HAPPEN, persisted (migration 121). Written on EVERY terminal write,
     // including the success path where both values are NULL — a run that succeeds must clear a
     // previous run's block, or the task keeps advertising a stale "your key was refused" long
     // after the user fixed it. Nulling is the whole reason this is unconditional rather than
     // tacked onto the error branch.
-    const runBlockCode = agentResult.runBlock?.code ?? null;
-    const runBlockMode = agentResult.runBlock?.mode ?? null;
-    const taskRunResult = await pool.query(
-      appliedStatus
+    const taskRunResult = auditedTaskRun
+      ? { rows: [auditedTaskRun] }
+      : await pool.query(
+      directAppliedStatus
         ? `UPDATE tasks
               SET run_status = $1, status = $2, run_block_code = $3, run_block_mode = $4,
                   run_last_heartbeat_at = NOW(), updated_at = NOW()
@@ -950,8 +1205,8 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
                   run_last_heartbeat_at = NOW(), updated_at = NOW()
             WHERE id = $4::uuid AND user_id = $5::uuid
             RETURNING ${RETURNING}`,
-      appliedStatus
-        ? [runStatus, appliedStatus, runBlockCode, runBlockMode, req.params.id, userId]
+      directAppliedStatus
+        ? [runStatus, directAppliedStatus, runBlockCode, runBlockMode, req.params.id, userId]
         : [runStatus, runBlockCode, runBlockMode, req.params.id, userId],
     );
 
@@ -960,17 +1215,14 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
     // run_id stamped on the task above. This is the handle the client uses to open
     // the session/chat that produced this activity row.
     //
-    // ATTRIBUTION FOLLOWS THE RUNTIME THAT ACTUALLY RAN. This used to record
-    // `runtime='agentbox'` / "Rem Cloud (AgentBox)"; the run now happens on the user's own
-    // gateway, so it records what the orchestrator sweep already records for the same
-    // runtime: `'gateway'` (migration 031 added it to the CHECK constraint for exactly this
-    // reason). Leaving the old value would make every future consumer read a wrong stored
-    // fact about which runtime did the work — the same failure CLAUDE.md documents for
-    // `clientId`. Decodable on the client today: `TaskRuntimeKind.gateway`
-    // (Shared/Models/TaskCollaboration.swift:25) is `isCloud` and displays as "Rem".
-    const result = await pool.query(
+    // Attribution comes from the runtime result. This is evidence, not a guess at the route:
+    // during a tenant-by-tenant cutover this endpoint can persist `gateway` for one account and
+    // `rem_runtime` for another without changing product code.
+    const result = auditedComment
+      ? { rows: [auditedComment] }
+      : await pool.query(
       `INSERT INTO task_comments (task_id, user_id, author_kind, author_label, body, proposed_status, previous_status, runtime, session_id, run_block_code, run_block_mode)
-       VALUES ($1::uuid, $2::uuid, 'cloud_agent', 'Rem Cloud', $3, $4, $5, 'gateway', $6, $7, $8)
+       VALUES ($1::uuid, $2::uuid, 'cloud_agent', 'Rem Cloud', $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${COMMENT_RETURNING}`,
       [
         req.params.id,
@@ -978,7 +1230,8 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
         agentResult.reply,
         proposedStatus,
         commentPreviousStatus,
-        runId,
+        runtime,
+        runtime === 'gateway' ? `openclaw-manual-task-${req.params.id.toLowerCase()}` : runId,
         runBlockCode,
         runBlockMode,
       ],
@@ -991,11 +1244,13 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
     // erasure. Runs after the comment INSERT and is best-effort: the comment is the
     // durable record of the run, and losing the bookkeeping write must not 500 a run
     // that actually succeeded.
-    const storedDescription = await applyAgentTaskContext(
-      req.params.id,
-      userId,
-      agentResult.taskContext,
-    );
+    const storedDescription = auditedTaskRun
+      ? auditedTaskRun.description ?? null
+      : await applyAgentTaskContext(
+          req.params.id,
+          userId,
+          agentResult.taskContext,
+        );
 
     // Persist the run's conversation turns (the ask + Rem's reply) as a replayable
     // transcript (migration 025), keyed by the same run_id stamped on the comment.
@@ -1014,6 +1269,9 @@ router.post('/tasks/:id/agent-run', requireJwt, async (req: Request, res: Respon
   } catch (error: any) {
     console.error('[TASKS] Error running agent:', error.message);
     res.status(500).json({ error: error.message || 'Failed to run agent' });
+  } finally {
+    await conversationLock?.query('ROLLBACK').catch(() => undefined);
+    conversationLock?.release();
   }
 });
 

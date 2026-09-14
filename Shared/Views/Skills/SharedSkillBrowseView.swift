@@ -95,7 +95,7 @@ struct SharedSkillBrowseView<Gateway: GatewaySessionProviding>: View {
                 searchFailureView(searchFailure)
             }
         } footer: {
-            Text("Search and install skills from ClawHub, the OpenClaw skill registry.")
+            Text("Search and install skills from ClawHub, the skill registry.")
         }
 
         if let results {
@@ -676,7 +676,7 @@ struct SharedClawHubUnavailableFixtureView: View {
                         action: nil
                     )
                 } footer: {
-                    Text("Search and install skills from ClawHub, the OpenClaw skill registry.")
+                    Text("Search and install skills from ClawHub, the skill registry.")
                 }
             }
             .background(DesignTokens.Color.backgroundPrimary)
@@ -719,7 +719,7 @@ private extension ClawHubSkillDetailResponse {
         ),
         owner: Owner(
             handle: "openclaw",
-            displayName: "OpenClaw",
+            displayName: "Rem",
             image: nil
         )
     )

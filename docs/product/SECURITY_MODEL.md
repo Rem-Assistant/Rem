@@ -208,19 +208,19 @@ Rules:
 
 ## Related Issues
 
-- [#572](https://github.com/Rem-Assistant/RemClaw/issues/572): Security posture
+- [#572](https://github.com/Rem-Assistant/Rem/issues/572): Security posture
   for Connectors, Skills, and gateway capabilities.
-- [#574](https://github.com/Rem-Assistant/RemClaw/issues/574): Ask-first browser
+- [#574](https://github.com/Rem-Assistant/Rem/issues/574): Ask-first browser
   link opening.
-- [#377](https://github.com/Rem-Assistant/RemClaw/issues/377): Curated MCP
+- [#377](https://github.com/Rem-Assistant/Rem/issues/377): Curated MCP
   integrations.
-- [#313](https://github.com/Rem-Assistant/RemClaw/issues/313): Skills browse,
+- [#313](https://github.com/Rem-Assistant/Rem/issues/313): Skills browse,
   install, configure, and enable.
-- [#446](https://github.com/Rem-Assistant/RemClaw/issues/446): Mac Settings and
+- [#446](https://github.com/Rem-Assistant/Rem/issues/446): Mac Settings and
   Connectors IA.
-- [#582](https://github.com/Rem-Assistant/RemClaw/issues/582): MCP add flow
+- [#582](https://github.com/Rem-Assistant/Rem/issues/582): MCP add flow
   should present advanced trust grant.
-- [#583](https://github.com/Rem-Assistant/RemClaw/issues/583): Mac capability
+- [#583](https://github.com/Rem-Assistant/Rem/issues/583): Mac capability
   scopes and action logs.
-- [#584](https://github.com/Rem-Assistant/RemClaw/issues/584): Skill install
+- [#584](https://github.com/Rem-Assistant/Rem/issues/584): Skill install
   provenance, requirements, and capability impact.

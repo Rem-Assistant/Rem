@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawKit
+import RemKit
 
 // MARK: - Shared Connection State
 

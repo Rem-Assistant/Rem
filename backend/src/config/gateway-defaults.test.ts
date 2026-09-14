@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import schemaContract from './gateway-schema-contract.json' with { type: 'json' };
@@ -25,6 +29,24 @@ import {
  * drift apart — these assertions fail.
  */
 describe('gateway-defaults command allowlist', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  /**
+   * The command inventory moved OUT of REMCLAW.md in #1282: it is now generated per session
+   * from the gateway's pairing record, and the parameter reference lives in the generator's
+   * `NODE_COMMAND_DOCS` map. This guard follows it there — the thing being protected is
+   * "registry and agent contract must not drift", not "REMCLAW.md must contain prose".
+   */
+  const remclawInstructions = readFileSync(
+    resolve(here, '../../../deploy/openclaw-gateway/hooks/remclaw/runtime-facts.js'),
+    'utf8',
+  );
+  // #1282 split the contract: per-command params live in the generated runtime
+  // reference above, behavioural routing rules stay in the prose file.
+  const remclawGuidance = readFileSync(
+    resolve(here, '../../../deploy/openclaw-gateway/hooks/remclaw/REMCLAW.md'),
+    'utf8',
+  );
+
   it('only allow-lists commands the iOS node actually implements', () => {
     const known = new Set<string>(IOS_NODE_COMMANDS);
     const phantom = DEFAULT_ALLOW_COMMANDS.filter((cmd) => !known.has(cmd));
@@ -49,16 +71,41 @@ describe('gateway-defaults command allowlist', () => {
     ]));
   });
 
+  it('keeps every advertised organization command in the injected agent contract', () => {
+    const organizationCommands = IOS_NODE_COMMANDS.filter((command) =>
+      command.startsWith('folders.') || command.startsWith('lists.'),
+    );
+    for (const command of organizationCommands) {
+      // Every organization command must have a parameter entry in NODE_COMMAND_DOCS, keyed by
+      // command id — otherwise the generated block degrades it to "call nodes describe".
+      expect(remclawInstructions).toContain(`'${command}': {`);
+    }
+  });
+
   /**
-   * The brief names tasks in prose and carries no ids, so without an allow-listed name
-   * lookup the agent cannot account for a line in its own brief. A node command the gateway
-   * does not allow is a command the agent can never call, so the allow-list half is asserted
-   * here. (The prose-documentation half lived in the deploy/ gateway hooks, which are not part
-   * of the open-core seed.)
+   * The brief names tasks in prose and carries no ids (`renderBucket` interpolates
+   * `it.title`; `chat.inject` posts `{ sessionKey, message }`). `tasks.get` needs a
+   * UUID and `tasks.list` has no title filter — so without an allow-listed, documented
+   * name lookup the agent cannot account for a line in its own brief. A node command
+   * the gateway does not allow is a command the agent can never call, and prose it
+   * never sees is a command it never reaches for, so both halves are asserted here.
    */
-  it('allow-lists a name lookup, so brief items can be resolved by title', () => {
+  it('allow-lists and documents a name lookup, so brief items can be resolved by title', () => {
     expect(IOS_NODE_COMMANDS).toContain('tasks.search');
     expect(DEFAULT_ALLOW_COMMANDS).toContain('tasks.search');
+    // Params live in the generated runtime reference (#1282 moved per-command docs
+    // out of REMCLAW.md so the agent's self-description comes from runtime facts).
+    expect(remclawInstructions).toContain("'tasks.search'");
+    // The routing rule is the half that changes behaviour: the failure mode was the
+    // agent reaching for memory search and concluding it had no record.
+    expect(remclawGuidance).toMatch(/call `tasks\.search` with that name first/i);
+    expect(remclawGuidance).toMatch(/do not.*reach for memory search/is);
+  });
+
+  it('documents the task update status values and completed alias accepted by iOS', () => {
+    expect(remclawInstructions).toContain('`pending`, `in_progress`, `blocked`, `completed`, `cancelled`');
+    expect(remclawInstructions).toContain('`completed: true` mirrors `status: "completed"`');
+    expect(remclawInstructions).toContain('`completed: false` moves it back to `pending`');
   });
 
   it('allow-lists every mutating capability the registry exposes', () => {
@@ -338,18 +385,34 @@ describe('buildGatewayConfigPatch — canonical managed Talk provider', () => {
  * THE CONTRACT TEST — the guard that was missing on 2026-07-16.
  *
  * I added `browser.localLaunchTimeoutMs` / `localCdpReadyTimeoutMs` to the patch after
- * verifying them in the `openclaw/` submodule. The submodule is not what runs: the hosted
- * gateway image (operated separately) pins its own OpenClaw ref, whose browser schema is
+ * verifying them in the `openclaw/` submodule. The submodule is not what runs: the fleet
+ * builds OPENCLAW_GIT_REF (deploy/openclaw-gateway/Dockerfile), whose browser schema is
  * `.strict()` and predates those keys. An unknown key is not ignored — the gateway prints
  * "Config invalid" and exits code=1, so every patched gateway crash-looped. And because
  * /setup/api/reconfigure deep-MERGES, a config patch can never remove a key, so reverting
  * the code could not heal them; recovery took `openclaw doctor --fix` on the machine.
  *
  * So: every key we emit must be one the DEPLOYED build accepts. The accepted set is
- * derived from the pinned ref's real schema and checked in as
- * `gateway-schema-contract.json`, because CI does not check out the submodule.
+ * generated from the pinned ref's real schema (npm run gen:gateway-schema-contract) and
+ * checked in, because CI does not check out the submodule.
  */
 describe('buildGatewayConfigPatch — deployed gateway schema contract', () => {
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const DOCKERFILE = resolve(HERE, '../../../deploy/openclaw-gateway/Dockerfile');
+
+  function pinnedRef(): string {
+    const m = readFileSync(DOCKERFILE, 'utf8').match(/OPENCLAW_GIT_REF=(\S+)/);
+    if (!m) throw new Error('No OPENCLAW_GIT_REF found in the gateway Dockerfile');
+    return m[1];
+  }
+
+  it('is generated from the ref the fleet actually builds', () => {
+    // If this fails you bumped OPENCLAW_GIT_REF: re-run
+    // `npm run gen:gateway-schema-contract` and re-check what the new build accepts.
+    // Do NOT just edit the JSON — the whole point is that a human re-verifies on a bump.
+    expect(schemaContract.openclawRef).toBe(pinnedRef());
+  });
+
   it('emits no browser key the deployed build would reject', () => {
     const { browser } = buildGatewayConfigPatch() as { browser?: Record<string, unknown> };
     const accepted = new Set<string>(schemaContract.accepts.browser);

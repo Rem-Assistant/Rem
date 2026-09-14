@@ -124,7 +124,7 @@ final class PreviewGatewaySession: GatewaySessionProviding {
                 approvedTargets: [
                     GatewayUpdateApprovedTarget(
                         id: "openclaw-stable",
-                        label: "OpenClaw stable",
+                        label: "Gateway stable",
                         channel: "stable",
                         image: "ghcr.io/rem-assistant/openclaw-gateway:stable",
                         requiredCapabilities: ["skills.search"],
@@ -172,7 +172,7 @@ final class PreviewGatewaySession: GatewaySessionProviding {
             id: "approved_gateway_image",
             label: "Approved Gateway Image",
             status: .ready,
-            message: "The stable OpenClaw gateway image is approved for preflight display, but installation remains disabled until every safety gate passes."
+            message: "The stable gateway image is approved for preflight display, but installation remains disabled until every safety gate passes."
         ),
         GatewayUpdatePreflightCheck(
             id: "post_update_health_check",

@@ -573,7 +573,7 @@ struct TaskActivityRow: View {
 
 /// The Activity **reply composer** — reuses the chat input shell (`RemComposerBar`)
 /// so the task page and the chat view share one component. The chat composer's
-/// logic is bound to `OpenClawChatViewModel` (send/abort/quota) and can't be
+/// logic is bound to `RemChatViewModel` (send/abort/quota) and can't be
 /// reused wholesale, so the shared piece is the *presentation* shell.
 ///
 /// V1 (iOS) is cloud-only, so the old Cloud/Local segmented control + helper copy

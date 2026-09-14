@@ -20,7 +20,7 @@ struct TaskRuntimeBadge: View {
 
     private var iconName: String {
         switch runtime {
-        case .agentbox, .gateway: "cloud.fill"
+        case .agentbox, .gateway, .remRuntime: "cloud.fill"
         case .localMac: "desktopcomputer"
         case .localiOS: "iphone"
         }

@@ -3,7 +3,7 @@ import Foundation
 /// Pure (no I/O) helpers for the LaunchAgent-secrets migration introduced
 /// to fix the leak documented in #383 / #384.
 ///
-/// **Background.** Earlier RemClaw Mac builds (pre-#275) wrote a
+/// **Background.** Earlier Rem Mac builds (pre-#275) wrote a
 /// LaunchAgent at `~/Library/LaunchAgents/app.remclaw.mac.gateway.plist`
 /// whose `EnvironmentVariables` dict contained the user's `OPENAI_API_KEY`
 /// and `OPENCLAW_AUTH_TOKEN` in plain XML. The plist sits at default Unix
@@ -15,7 +15,7 @@ import Foundation
 /// we can unit-test it without touching launchd or Keychain.
 ///
 /// The Mac-side glue (`LaunchAgentSecretsMigrator` in
-/// `RemClawMac/Sources/Gateway/`) reads the plist, runs it through
+/// `RemMac/Sources/Gateway/`) reads the plist, runs it through
 /// `extractSecrets` here, persists what came out into the canonical homes
 /// (Keychain + `~/.openclaw/openclaw.json`), and removes the plist. Keeping
 /// the parser pure means tests can pass an in-memory `Data` and assert on
@@ -29,23 +29,23 @@ public enum LaunchAgentSecretsMigration {
     public struct ExtractedSecrets: Equatable, Sendable {
         public var openAIKey: String?
         public var anthropicKey: String?
-        public var openClawAuthToken: String?
+        public var gatewayAuthToken: String?
 
         public init(
             openAIKey: String? = nil,
             anthropicKey: String? = nil,
-            openClawAuthToken: String? = nil
+            gatewayAuthToken: String? = nil
         ) {
             self.openAIKey = openAIKey
             self.anthropicKey = anthropicKey
-            self.openClawAuthToken = openClawAuthToken
+            self.gatewayAuthToken = gatewayAuthToken
         }
 
         /// True when at least one secret needs migrating. Used to decide
         /// whether the on-disk plist warrants the full migrate-then-delete
         /// path or just a quiet `removeItem`.
         public var hasAnySecret: Bool {
-            openAIKey != nil || anthropicKey != nil || openClawAuthToken != nil
+            openAIKey != nil || anthropicKey != nil || gatewayAuthToken != nil
         }
     }
 
@@ -87,7 +87,7 @@ public enum LaunchAgentSecretsMigration {
         return ExtractedSecrets(
             openAIKey: nonEmpty("OPENAI_API_KEY"),
             anthropicKey: nonEmpty("ANTHROPIC_API_KEY"),
-            openClawAuthToken: nonEmpty("OPENCLAW_AUTH_TOKEN")
+            gatewayAuthToken: nonEmpty("OPENCLAW_AUTH_TOKEN")
         )
     }
 
@@ -99,7 +99,7 @@ public enum LaunchAgentSecretsMigration {
         var present: [String] = []
         if secrets.openAIKey != nil { present.append("OPENAI_API_KEY") }
         if secrets.anthropicKey != nil { present.append("ANTHROPIC_API_KEY") }
-        if secrets.openClawAuthToken != nil { present.append("OPENCLAW_AUTH_TOKEN") }
+        if secrets.gatewayAuthToken != nil { present.append("OPENCLAW_AUTH_TOKEN") }
         if present.isEmpty { return "no recognized secrets" }
         return "secrets present: \(present.joined(separator: ", "))"
     }

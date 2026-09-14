@@ -111,7 +111,7 @@ struct ChatConnectionRecoveryCard: View {
     }
 }
 
-/// Full-screen bridge used before `OpenClawChatViewModel` exists. It preserves
+/// Full-screen bridge used before `RemChatViewModel` exists. It preserves
 /// the established chat skeleton instead of switching to a bare spinner, and
 /// gives terminal trust/reachability states a route to recovery.
 struct ChatConnectionLoadingView: View {

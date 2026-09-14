@@ -1,6 +1,31 @@
 # RemClaw Backend
 
-Minimal Express server for auth, gateway metadata, billing, and gateway lifecycle support.
+Express backend for Rem auth, product data, billing, runtime execution, and transitional gateway
+lifecycle support.
+
+## Rem-owned runtime
+
+`src/runtime/` is the product/runtime boundary. Signal relevance, digest generation,
+Rem-managed Daily Brief authoring, Rem-managed manual task runs, task-chat continuations, and the
+backend ordinary-conversation API execute on the tool-free shared runtime: it uses authenticated
+tenant identity, a PostgreSQL idempotency and terminal-result ledger, atomic managed-quota
+reservation, typed provider failures, and no OpenClaw session or per-user Fly gateway. Runtime payer
+ownership is durable user state, not gateway topology. Manual task runs never fall back to a
+credential-owning gateway. Scheduled routines,
+brief conversation delivery, autonomous task sweeps, native general-chat delivery, and tool-bearing
+chat still use transitional OpenClaw paths. Migration 134 provides tenant-owned conversation
+create/list/read/rename/delete, bounded paginated history and transcript continuation, exact replay, and deletion purge;
+native routing and legacy transcript import remain subsequent slices. Migration 129 and
+`RemCapabilityEffectLedger` establish the first
+audited capability/effect fence: exact tenant/run/grant/session/scope identity, atomic one-use grant
+consumption, live run-owner and exact act-policy authorization, idempotent effect claims, revocation,
+redacted outcomes, and an `uncertain` recovery state that awaits adapter-specific evidence and cannot
+silently repeat an external write. Internal-service reconciliation leases can settle an uncertain
+effect after executor-token loss but cannot authorize dispatch. Claim and reconciliation tokens never
+appear in audit/replay views, and immutable admitted-run identity survives runtime-row pruning.
+The audited `tasks.update` adapter has crossed that boundary; additional tool adapters, connector
+reads, device transport, and broader approval UI remain required. The autonomous sweep proposes
+through the shared runtime and applies via that audited adapter in the canonical task conversation.
 
 ## Quick Start (1 Command)
 
@@ -122,9 +147,19 @@ live writer advertises the lifecycle/generation fence and all legacy replicas ha
 then, inactive-key scrub and rotation remain durably pending and the installed key is left intact,
 which makes both old and new wake writers converge without oscillation.
 
-Gateway image rollout (canary → batch → fleet) is driven by the managed cloud
-infrastructure, which is operated separately and is not part of this repo (see
-the Open-Core Boundary in the top-level `README.md`).
+When the gateway image needs to be updated, start with the canary flow in
+`deploy/openclaw-gateway/DEPLOYMENT-RUNBOOK.md`. Do not jump straight to a
+fleet update unless a canary and small batch have already passed.
+
+For the final fleet phase, prefer the existing batch script:
+
+```bash
+npm run update:image:all -- --dry-run --limit=5 --image=<image-ref>
+```
+
+Then remove `--dry-run` only for an explicitly approved batch before rolling
+wider. The script updates the Fly Machine image while preserving config, env,
+mounts, and the attached `/data` volume.
 
 ### Managed voice configuration
 
@@ -219,7 +254,7 @@ Additional env vars for notifications:
 
 ## Daily Brief Authoring
 
-The BRIEF owns its title. Gateway-authored prose must open with a `## ` headline line; the
+The BRIEF owns its title. AI-authored prose must open with a `## ` headline line; the
 authoring lease holder extracts it once (`extractBriefHeadline`) and stores it in
 `daily_brief_artifacts.headline` (migration 119) beside `summary`. `GET /api/v1/brief` returns it
 as `headline`, and every client surface that names the brief renders that one string — the iOS
@@ -239,7 +274,11 @@ opening an empty chat.
 
 Due check-in authoring may add a bounded backend-owned Gmail snapshot. The collector uses only
 ACTIVE Composio accounts and pinned read-only `GMAIL_FETCH_EMAILS` `20260721_00`; provider text is
-held in-memory and sent only to a plain backend chat-completions call with no tool definitions; raw
-email data never enters gateway `chat.send` or its JSONL. Artifacts persist provenance only. A timeout,
-schema/transport error, paused connection, or over-cap account set records Gmail unavailable and
-continues task-only authoring. No deploy is implied by this contract.
+held in memory and sent only through the Rem-owned shared runtime with `observe`, an empty tool
+allow-list, and no approval. Raw email data never enters gateway `chat.send` or its JSONL. Managed
+task-only authoring uses that same runtime and no personal gateway; BYOK task-only authoring remains
+on the user's transitional gateway until Rem owns an explicit credential transport. Conversation
+delivery still injects the final artifact through the gateway and is a separate migration seam.
+Artifacts persist provenance only. A timeout, schema/transport error, paused connection, or
+over-cap account set records Gmail unavailable and continues task-only authoring. No deploy is
+implied by this contract.

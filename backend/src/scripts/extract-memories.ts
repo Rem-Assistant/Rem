@@ -1,7 +1,7 @@
 /**
  * Auto-extract durable user facts — the scheduled "Dreaming" pass.
  *
- * For every user with recent activity, ask THAT USER'S OWN GATEWAY AGENT to distill 2-3
+ * When the optional backend pass is enabled, ask Rem's shared tool-free runtime to distill 2-3
  * durable facts worth remembering (preferences, ongoing goals, recurring context) and write
  * each via the user-memory service with source='auto'. Candidates are deduped against the
  * user's existing facts so the same durable fact isn't re-added every night.
@@ -10,18 +10,17 @@
  * minutes (alongside check-ins + routines), but this pass is meant to run once per night —
  * so main() SELF-GATES on a nightly UTC window plus a global once-per-day last-run stamp
  * (cron_job_runs, migration 030). Outside the window, or if it already ran today, main()
- * logs a skip and exits 0 without touching any user gateway. This is what stops the
- * "memory keeper" prompt from opening a fresh `rem-memory-<date>` chat every 15 minutes.
+ * logs a skip and exits 0 without calling the runtime.
  *
  *   npm run memories:extract   # no-ops unless inside the nightly window + not yet run today
  *
- * Cadence note: extraction is doubly idempotent — the nightly gate bounds it to one pass per
- * UTC day, and dedupe drops anything already known so even a forced re-run writes nothing new.
- * A nightly cadence keeps gateway spend bounded while staying fresh enough for the Memory
+ * Cadence note: the nightly gate bounds normal operation to one pass per UTC day, and dedupe
+ * drops facts already known if an operator deliberately forces another pass.
+ * A nightly cadence keeps model spend bounded while staying fresh enough for the Memory
  * screen's "last updated" line.
  *
  * "Active user" = anyone whose tasks/comments changed within RECENT_ACTIVITY_DAYS, so we never
- * wake a dormant account's gateway. Never-throw per user: one user's failure is logged and the
+ * process a dormant account. Never-throw per user: one user's failure is logged and the
  * batch continues. Mirrors src/scripts/run-digests.ts / run-routines.ts.
  */
 
@@ -58,9 +57,9 @@ export const AUTO_SOURCE = 'auto';
  *     already written stay exactly as-is and still surface in Settings → Memory).
  *   - the user-typed memory path (user-memory.service / user-memory.routes) is untouched.
  *
- * REVERSIBLE: set `MEMORY_KEEPER_ENABLED=1` (or true/yes/on) in the backend env to
- * re-enable the old extraction pass — e.g. if dreaming turns out not to cover a case we
- * relied on. Mirrors the BRIEF_AI_AUTHORING_ENABLED kill-switch in run-brief-authoring.ts.
+ * REVERSIBLE: set `MEMORY_KEEPER_ENABLED=1` (or true/yes/on) in the backend env to run this
+ * backend-owned implementation during migration away from native dreaming. Mirrors the
+ * BRIEF_AI_AUTHORING_ENABLED kill-switch in run-brief-authoring.ts.
  */
 export function isMemoryKeeperEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = env.MEMORY_KEEPER_ENABLED?.trim().toLowerCase();
@@ -72,8 +71,7 @@ export const MEMORIES_JOB_NAME = 'memories:extract';
 
 /**
  * Nightly window (UTC) the Dreaming pass is allowed to run in. The Railway `cron-all`
- * service ticks every 15 min, so without a gate extraction fired ~96×/day — spamming
- * each user's gateway and materializing a fresh `rem-memory-<date>` chat every tick.
+ * service ticks every 15 min, so without a gate extraction fired ~96×/day.
  * We instead run at most once per UTC day, on the first tick that lands in this window.
  * A window (not a single hour) survives a missed tick; the last-run stamp collapses the
  * remaining ticks in the window to a no-op. Override the start hour via env for ops.
@@ -170,8 +168,8 @@ async function main() {
 
   // Nightly gate: the Dreaming pass runs at most once per UTC day, inside a nightly
   // window — even though `cron-all` invokes this script every 15 minutes. Without it,
-  // extraction spammed each user's gateway and created a `rem-memory-<date>` chat on
-  // every tick. Stamp BEFORE doing any work so a mid-pass crash can't re-spam the day.
+  // extraction called the model on every tick. Stamp BEFORE doing any work so a mid-pass crash
+  // cannot repeat a whole day's batch.
   const lastRun = await getCronJobLastRun(MEMORIES_JOB_NAME);
   if (!shouldRunNightlyExtraction(now, lastRun)) {
     console.log(
@@ -227,10 +225,8 @@ async function main() {
     } catch (err) {
       // #906's `GmiEmptyCompletionError` branch used to live here, classifying a transient
       // empty completion as a SKIP so one model no-op could not fail the whole cron run. It is
-      // gone because the condition it classified can no longer occur: extraction runs only on
-      // the user's own gateway now (the org-key GMI fallback was removed — see
-      // memory-extraction.service.ts), and a gateway turn that comes back empty or fails is
-      // already `[]` inside the service rather than a thrown error. The protection #906 bought
+      // gone because the condition it classified can no longer occur: the Rem runtime returns an
+      // empty/failure outcome as `[]` inside the service rather than throwing. The protection #906 bought
       // is therefore structural instead of a catch clause.
       //
       // What reaches here is what always should have: genuine failures (network, auth,

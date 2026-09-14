@@ -541,19 +541,21 @@ struct SharedComposioConnectionsView: View {
         if statusByToolkit[slug]?.isConnected == true {
             // Connected → LEFT/metadata drills into the manage/disconnect sheet; RIGHT is the
             // enable/disable (pause) switch. Two distinct actions, so the row is NOT a single button.
-            HStack(spacing: 12) {
+            HStack(spacing: DesignTokens.Spacing.md) {
                 Button {
                     managingToolkit = toolkit
                 } label: {
-                    HStack(spacing: 6) {
-                        // Dim the logo when paused so the state reads at a glance.
-                        connectorIcon(for: toolkit)
-                            .opacity(isEnabled(slug) ? 1 : 0.4)
-                        labelStack(slug)
+                    // Same leading (icon + text) as a not-connected row, at the SAME row spacing,
+                    // so every row's icon and text line up regardless of state (#1366). The chevron
+                    // is pushed by the Spacer to the trailing edge of the tappable area — a
+                    // disclosure sitting beside the subtitle, vertically centered on the row —
+                    // rather than floating right after the text.
+                    HStack(spacing: DesignTokens.Spacing.md) {
+                        connectorLeading(toolkit, dimmed: !isEnabled(slug))
+                        Spacer(minLength: 0)
                         Image(systemName: "chevron.forward")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
-                        Spacer(minLength: 0)
                     }
                     .contentShape(Rectangle())
                 }
@@ -570,14 +572,27 @@ struct SharedComposioConnectionsView: View {
             }
             .accessibilityIdentifier("connector-row-\(slug)")
         } else {
-            HStack(spacing: 12) {
-                connectorIcon(for: toolkit)
-                labelStack(slug)
+            HStack(spacing: DesignTokens.Spacing.md) {
+                connectorLeading(toolkit, dimmed: false)
                 Spacer(minLength: 0)
                 trailing(slug)
             }
             .accessibilityIdentifier("connector-row-\(slug)")
         }
+    }
+
+    /// Leading icon + text, identical in every row state so the icon, name, and subtitle sit at the
+    /// same offset and the same icon→text gap whether the row is connected or not (#1366). Emitted
+    /// as two sibling views (not wrapped in their own stack) so the enclosing row `HStack`'s spacing
+    /// governs the icon→text gap directly — the connected and not-connected rows share that spacing,
+    /// so they can't drift. Only the paused-dim opacity varies; a not-connected row is never paused,
+    /// so it passes `dimmed: false`.
+    @ViewBuilder
+    private func connectorLeading(_ toolkit: ComposioToolkitSummary, dimmed: Bool) -> some View {
+        // Dim the logo when paused so the state reads at a glance.
+        connectorIcon(for: toolkit)
+            .opacity(dimmed ? 0.4 : 1)
+        labelStack(toolkit.slug)
     }
 
     private func labelStack(_ slug: String) -> some View {

@@ -2,8 +2,8 @@
 # Architecture enforcement rules for harness engineering
 
 included:
-  - RemClaw/Sources
-  - RemClawMac/Sources
+  - Rem/Sources
+  - RemMac/Sources
   - Shared
 
 excluded:

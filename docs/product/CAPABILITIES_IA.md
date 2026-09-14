@@ -1,7 +1,7 @@
 # Connectors, Capabilities, Skills, MCP, and Gateways
 
 This note is the product IA decision for issue
-[#530](https://github.com/Rem-Assistant/RemClaw/issues/530). It turns the
+[#530](https://github.com/Rem-Assistant/Rem/issues/530). It turns the
 broader direction in [VISION.md](VISION.md) into rules agents can use when
 slicing Settings, gateway detail, and integration work.
 
@@ -269,12 +269,12 @@ reviewed, and closed independently.
 
 | Order | Lane | Owning issue | Exit criteria |
 |-------|------|--------------|---------------|
-| 1 | Skill requirement actions | [#313](https://github.com/Rem-Assistant/RemClaw/issues/313), [#600](https://github.com/Rem-Assistant/RemClaw/issues/600) | Missing skill requirements lead to the right action: installer execution, Connector authorization, gateway recovery, or manual gateway setup. |
-| 2 | Connector catalog and detail IA | [#377](https://github.com/Rem-Assistant/RemClaw/issues/377), [#446](https://github.com/Rem-Assistant/RemClaw/issues/446) | Calendar, Gmail, GitHub, and Notion have user-facing Connector rows with provider/status/capability copy. Mac, Files, and Browser can appear as IA placeholders here, but their real capability behavior is owned by the Mac-local lane below. |
-| 3 | Connection and pairing recovery pattern | [#445](https://github.com/Rem-Assistant/RemClaw/issues/445), [#284](https://github.com/Rem-Assistant/RemClaw/issues/284) | Launch, banners, Machine Detail, and Machine Connections reuse one recovery pattern for "not paired", "Mac offline", "approval pending", and "continue anyway". |
-| 4 | Custom MCP as Advanced Connector | [#338](https://github.com/Rem-Assistant/RemClaw/issues/338), [#377](https://github.com/Rem-Assistant/RemClaw/issues/377) | Custom MCP management remains available to advanced users but is framed as an advanced Connector route, not a separate everyday concept. |
-| 5 | Mac-local capability UX | [#317](https://github.com/Rem-Assistant/RemClaw/issues/317), [#495](https://github.com/Rem-Assistant/RemClaw/issues/495), [#659](https://github.com/Rem-Assistant/RemClaw/issues/659) | Remote Mac control, sidebar hierarchy, and Mac task/detail flows feel like one desktop product instead of mobile screens wrapped in a shell. |
-| 6 | Gateway version/update selection | [#631](https://github.com/Rem-Assistant/RemClaw/issues/631), [#658](https://github.com/Rem-Assistant/RemClaw/issues/658) | Users can see available OpenClaw versions, understand supported/unsupported targets, and upgrade only through tested backup/health/rollback checks. |
+| 1 | Skill requirement actions | [#313](https://github.com/Rem-Assistant/Rem/issues/313), [#600](https://github.com/Rem-Assistant/Rem/issues/600) | Missing skill requirements lead to the right action: installer execution, Connector authorization, gateway recovery, or manual gateway setup. |
+| 2 | Connector catalog and detail IA | [#377](https://github.com/Rem-Assistant/Rem/issues/377), [#446](https://github.com/Rem-Assistant/Rem/issues/446) | Calendar, Gmail, GitHub, and Notion have user-facing Connector rows with provider/status/capability copy. Mac, Files, and Browser can appear as IA placeholders here, but their real capability behavior is owned by the Mac-local lane below. |
+| 3 | Connection and pairing recovery pattern | [#445](https://github.com/Rem-Assistant/Rem/issues/445), [#284](https://github.com/Rem-Assistant/Rem/issues/284) | Launch, banners, Machine Detail, and Machine Connections reuse one recovery pattern for "not paired", "Mac offline", "approval pending", and "continue anyway". |
+| 4 | Custom MCP as Advanced Connector | [#338](https://github.com/Rem-Assistant/Rem/issues/338), [#377](https://github.com/Rem-Assistant/Rem/issues/377) | Custom MCP management remains available to advanced users but is framed as an advanced Connector route, not a separate everyday concept. |
+| 5 | Mac-local capability UX | [#317](https://github.com/Rem-Assistant/Rem/issues/317), [#495](https://github.com/Rem-Assistant/Rem/issues/495), [#659](https://github.com/Rem-Assistant/Rem/issues/659) | Remote Mac control, sidebar hierarchy, and Mac task/detail flows feel like one desktop product instead of mobile screens wrapped in a shell. |
+| 6 | Gateway version/update selection | [#631](https://github.com/Rem-Assistant/Rem/issues/631), [#658](https://github.com/Rem-Assistant/Rem/issues/658) | Users can see available OpenClaw versions, understand supported/unsupported targets, and upgrade only through tested backup/health/rollback checks. |
 
 Do not treat this order as a freeze. App-readiness regressions such as auth,
 keychain, pairing, data loss, or broken gateway reachability can preempt it.
@@ -284,16 +284,16 @@ which lane should resume next.
 ## Supersedes / Clarifies
 
 - Clarifies issue
-  [#313](https://github.com/Rem-Assistant/RemClaw/issues/313): Skills and OAuth
+  [#313](https://github.com/Rem-Assistant/Rem/issues/313): Skills and OAuth
   are implementation/readiness pieces of Connectors, not a competing root IA.
 - Clarifies issue
-  [#338](https://github.com/Rem-Assistant/RemClaw/issues/338): MCP remains the
+  [#338](https://github.com/Rem-Assistant/Rem/issues/338): MCP remains the
   advanced/custom substrate, not the default integration label.
 - Clarifies issue
-  [#446](https://github.com/Rem-Assistant/RemClaw/issues/446): Mac Settings IA
+  [#446](https://github.com/Rem-Assistant/Rem/issues/446): Mac Settings IA
   should keep common user paths in-app and avoid exposing gateway configuration
   as the only route to everyday integrations.
 - Clarifies issue
-  [#448](https://github.com/Rem-Assistant/RemClaw/issues/448): Mac/iOS parity is
+  [#448](https://github.com/Rem-Assistant/Rem/issues/448): Mac/iOS parity is
   about matching product concepts, not necessarily identical implementation
   rows on every platform.

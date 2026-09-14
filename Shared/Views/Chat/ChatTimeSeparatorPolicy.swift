@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Deliberately pure and Foundation-only: the grouping decision is about timestamps, not about
 /// message structure, so it can be exercised directly without a simulator or the OpenClaw packages.
-/// The `OpenClawChatMessage` adapter lives at the call site in `SharedRemChatView`.
+/// The `RemChatMessage` adapter lives at the call site in `SharedRemChatView`.
 enum ChatTimeSeparatorPolicy {
     /// Messages further apart than this begin a new group. One hour is the common messaging-app
     /// default and comfortably separates a morning brief from an afternoon one, while keeping the

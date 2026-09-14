@@ -7,7 +7,7 @@
  * correct in isolation (there is a unit test for it too). Every way this feature can be
  * wrong lives in the wiring:
  *   - the run writes `description` with a plain UPDATE and silently eats what the user
- *     typed — the exact failure the product decision names;
+ *     typed — the exact failure DECISIONS.md names;
  *   - the user's PATCH writes the whole column and silently eats the agent's block;
  *   - the run writes a block but the next run's prompt never reads it back, so runs keep
  *     starting from zero and the column is decoration;
@@ -17,8 +17,7 @@
  * A test that stubbed the DB, or called `setAgentContext` directly, would pass with any of
  * those bugs present.
  *
- * So the ONLY thing stubbed is the network boundary: `runAgentTurnOnGateway`, the gateway
- * turn itself.
+ * So the ONLY thing stubbed is the Rem runtime boundary.
  * Prompt building, marker parsing, the merge, the transaction and every SQL statement are
  * the real ones, running against a real Postgres, with migrations applied from the actual
  * .sql files.
@@ -52,15 +51,35 @@ const poolMock = vi.hoisted(() => ({
     release: () => undefined,
   }),
 }));
-vi.mock('../db/pool.js', () => ({ pool: poolMock, DatabaseQueryable: null }));
+const taskConversationPool = vi.hoisted(() => ({
+  connect: async () => ({
+    query: async (...args: any[]) => {
+    const sql = String(args[0]);
+    // PGlite is a single embedded connection and does not implement PostgreSQL advisory
+    // locks. This suite proves the route's real product SQL/merge behavior, not contention;
+    // transaction-lock ordering is asserted by the route unit tests. BEGIN/ROLLBACK are also
+    // swallowed here because production uses a separate pool connection while PGlite exposes
+    // only this one engine; forwarding them would roll back the route's ordinary pool writes.
+    if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+    if (sql.includes('pg_try_advisory_xact_lock')) {
+      return { rows: [{ acquired: true }], rowCount: 1 };
+    }
+    return poolMock.db.query(...args);
+    },
+    release: () => undefined,
+  }),
+}));
+vi.mock('../db/pool.js', () => ({
+  pool: poolMock,
+  taskConversationPool,
+  DatabaseQueryable: null,
+}));
 
-// THE ONLY STUB: the gateway turn. Everything between the HTTP request and the SQL is real.
-// The manual agent-run route now runs on the OWNER'S gateway, so this is the network
-// boundary the run crosses.
-const runAgentTurnOnGateway = vi.hoisted(() => vi.fn());
-vi.mock('./gateway-agent.service.js', () => ({
-  runAgentTurnOnGateway,
-  injectAssistantMessageOnGateway: vi.fn(),
+// THE ONLY STUB: the runtime turn. Everything between the HTTP request and the SQL is real.
+const runAgentTurnOnSharedRuntime = vi.hoisted(() => vi.fn());
+vi.mock('../runtime/agent-runtime.service.js', () => ({
+  runAgentTurnOnSharedRuntime,
+  runAgentTurn: vi.fn(),
 }));
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -134,19 +153,24 @@ async function comments() {
 
 /** The prose actually handed to the model on the most recent run. */
 function lastPrompt(): string {
-  const calls = runAgentTurnOnGateway.mock.calls;
+  const calls = runAgentTurnOnSharedRuntime.mock.calls;
   if (!calls.length) return '';
   return String((calls[calls.length - 1][0] as { message?: unknown }).message ?? '');
 }
 
 /** Run the agent once with a canned reply. Returns the route's JSON. */
 async function runAgent(reply: string) {
-  runAgentTurnOnGateway.mockResolvedValueOnce({
+  runAgentTurnOnSharedRuntime.mockResolvedValueOnce({
     ok: true,
     text: reply,
     runId: 'run-1',
     sessionKey: `rem-task-${TASK_ID}`,
     toolCalls: [],
+    provenance: {
+      runtimeId: 'rem_shared',
+      persistenceKind: 'rem_runtime',
+      billingMode: 'rem_managed',
+    },
   });
   const res = await request(taskApi()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
   expect(res.status).toBe(201);
@@ -161,10 +185,8 @@ describe('co-authored tasks.description through the real routes (migration 120)'
   beforeAll(async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     poolMock.db = new PGlite();
-    // `gateway_url`/`gateway_token_encrypted`/`hosting_provider` are here so the run-block mode
-    // resolver reads a real (empty) gateway record instead of erroring into `unknown` by
-    // accident. Left NULL: no gateway on record is a legitimate state, and it resolves to
-    // `unknown` through the intended branch rather than through the catch.
+    // Legacy gateway columns remain because the task runtime is still transitional. Payer
+    // ownership itself is added by migration 126 and no longer derives from these fields.
     await poolMock.db.exec(
       `CREATE TABLE users (
          id UUID PRIMARY KEY, timezone TEXT,
@@ -191,6 +213,8 @@ describe('co-authored tasks.description through the real routes (migration 120)'
       // reference them, so without this the real route 500s — same hand-maintained-list trap as
       // 023/024 and 120 above.
       '121_add_run_block_reason.sql',
+      '124_add_rem_runtime_to_task_comments.sql',
+      '126_add_model_runtime_mode.sql',
       // Replayable: the runner records applied files, but every migration is expected to
       // survive a re-run (a first boot after the tracking table was introduced replays all).
       '120_add_description_to_tasks.sql',
@@ -384,7 +408,7 @@ describe('co-authored tasks.description through the real routes (migration 120)'
     const rows = await comments();
     expect(rows).toHaveLength(1);
     expect(rows[0].author_kind).toBe('cloud_agent');
-    expect(rows[0].runtime).toBe('gateway');
+    expect(rows[0].runtime).toBe('rem_runtime');
     expect(rows[0].session_id).not.toBeNull();
     // The comment says what HAPPENED; the description says what is TRUE NOW. The machine
     // marker belongs to neither surface once parsed.
@@ -418,7 +442,11 @@ describe('co-authored tasks.description through the real routes (migration 120)'
   // ---------------------------------------------------------------------------
 
   it('stores a blocked run reason the CHECK constraints actually accept', async () => {
-    runAgentTurnOnGateway.mockResolvedValueOnce({ ok: false, reason: 'wake_failed' });
+    runAgentTurnOnSharedRuntime.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unavailable',
+      provenance: { runtimeId: 'rem_shared', persistenceKind: 'rem_runtime', billingMode: 'rem_managed' },
+    });
 
     const res = await request(taskApi()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
     expect(res.status).toBe(201);
@@ -429,8 +457,8 @@ describe('co-authored tasks.description through the real routes (migration 120)'
       run_block_code: 'runtime_unavailable',
     });
     expect(res.body.run_block_code).toBe('runtime_unavailable');
-    // No gateway row here, so the mode is honestly `unknown` — the resolver does not guess.
-    expect(res.body.run_block_mode).toBe('unknown');
+    // Existing users are explicitly Rem-managed even when no personal gateway is present.
+    expect(res.body.run_block_mode).toBe('rem_managed');
 
     // And durably, which is what run history reads. Both rows, because a task holds only its
     // last run's state while the comment holds its own.
@@ -448,7 +476,11 @@ describe('co-authored tasks.description through the real routes (migration 120)'
   });
 
   it('CLEARS the stored reason when the next run succeeds', async () => {
-    runAgentTurnOnGateway.mockResolvedValueOnce({ ok: false, reason: 'timeout' });
+    runAgentTurnOnSharedRuntime.mockResolvedValueOnce({
+      ok: false,
+      reason: 'timeout',
+      provenance: { runtimeId: 'rem_shared', persistenceKind: 'rem_runtime', billingMode: 'rem_managed' },
+    });
     await request(taskApi()).post(`/api/v1/tasks/${TASK_ID}/agent-run`).send({});
     const blocked = await poolMock.db.query(
       'SELECT run_block_code FROM tasks WHERE id = $1::uuid',

@@ -141,7 +141,7 @@ struct ActionLifecycleDisplay {
 }
 
 /// Exact transport evidence for one gateway execution. The transport emits this
-/// before OpenClawChatUI rewrites an agent event's execution run ID to its
+/// before RemChatUI rewrites an agent event's execution run ID to its
 /// persisted history session ID.
 struct RunLifecycleEpoch: Hashable, Sendable {
     static let legacy = Self(
@@ -522,7 +522,7 @@ struct RunActivityAccumulator {
         activeTransportRunIDs = []
     }
 
-    /// `OpenClawChatViewModel` currently exposes only a count of pending runs,
+    /// `RemChatViewModel` currently exposes only a count of pending runs,
     /// while pending tool calls are session-wide and carry no public run ID. If
     /// runs overlap, attributing those calls to either run would merge unrelated
     /// timelines. Fail closed for the entire overlap window, then start clean on

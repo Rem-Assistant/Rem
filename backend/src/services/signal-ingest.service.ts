@@ -536,6 +536,12 @@ export interface SignalIngestCounters {
   judgedAct: number;
   /** Verdicts stored as 'drop' — these will NOT become suggestions. */
   judgedDrop: number;
+  /** Verdicts folded into an existing parent (aggregation). Not their own suggestion. */
+  judgedAppend: number;
+  /** Verdicts routed to prose only (no task). */
+  judgedMention: number;
+  /** Verdicts that closed an existing task the signal showed was handled. */
+  judgedComplete: number;
   /** Considered rows that got no usable verdict. They stay unjudged and SURFACE (fail-open). */
   judgeUnjudged: number;
   /** Users whose relevance pass could not run at all. Not a failure; their rows surface. */
@@ -557,6 +563,9 @@ export function emptySignalIngestCounters(): SignalIngestCounters {
     judged: 0,
     judgedAct: 0,
     judgedDrop: 0,
+    judgedAppend: 0,
+    judgedMention: 0,
+    judgedComplete: 0,
     judgeUnjudged: 0,
     judgeUnavailable: 0,
   };
@@ -576,6 +585,9 @@ function addCounters(into: SignalIngestCounters, from: SignalIngestCounters): vo
   into.judged += from.judged;
   into.judgedAct += from.judgedAct;
   into.judgedDrop += from.judgedDrop;
+  into.judgedAppend += from.judgedAppend;
+  into.judgedMention += from.judgedMention;
+  into.judgedComplete += from.judgedComplete;
   into.judgeUnjudged += from.judgeUnjudged;
   into.judgeUnavailable += from.judgeUnavailable;
 }
@@ -680,6 +692,9 @@ export async function ingestSignalsForUser(
     counters.judged += relevance.considered;
     counters.judgedAct += relevance.act;
     counters.judgedDrop += relevance.drop;
+    counters.judgedAppend += relevance.append;
+    counters.judgedMention += relevance.mention;
+    counters.judgedComplete += relevance.completed;
     counters.judgeUnjudged += relevance.unjudged;
     if (relevance.unavailableReason) {
       counters.judgeUnavailable += 1;
@@ -873,6 +888,7 @@ export function formatSignalIngestSummary(summary: SignalIngestSummary): string 
     + `outOfWindow=${summary.outOfWindow} `
     + `ingested=${summary.ingested} duplicates=${summary.duplicates} `
     + `judged=${summary.judged} (act=${summary.judgedAct} drop=${summary.judgedDrop} `
+    + `append=${summary.judgedAppend} mention=${summary.judgedMention} complete=${summary.judgedComplete} `
     + `unjudged=${summary.judgeUnjudged} unavailable=${summary.judgeUnavailable}) `
     + `failed=${summary.failed} (sources=${summary.sourcesFailed} writes=${summary.writesFailed})`
   );

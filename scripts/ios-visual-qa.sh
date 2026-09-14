@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Branch-scoped iOS visual QA helper.
 #
-# This helper builds the branch-local RemClaw iOS app, installs it on a named or
+# This helper builds the branch-local Rem iOS app, installs it on a named or
 # id-addressed simulator, launches it with bounded simctl commands, and writes a
 # durable screenshot/report bundle for PR evidence. It intentionally avoids
 # mutating simulator app data unless --reset-simulator or --uninstall-app is
@@ -191,7 +191,7 @@ kill_stale_simctl_for_device() {
 }
 
 app_path() {
-  printf '%s\n' "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION-iphonesimulator/RemClaw.app"
+  printf '%s\n' "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION-iphonesimulator/Rem.app"
 }
 
 write_report_header() {
@@ -408,8 +408,6 @@ write_report_header
 trap 'status=$?; if [ "$status" -ne 0 ] && [ "$COMPLETED" != "1" ] && [ -n "${REPORT:-}" ] && [ -f "$REPORT" ]; then printf "\nResult: failed with exit code %s before screenshot capture.\n" "$status" >>"$REPORT"; fi' EXIT
 
 cd "$PROJECT_ROOT"
-"$PROJECT_ROOT/scripts/bootstrap-submodules.sh" >>"$OUT_DIR/bootstrap.log" 2>&1
-append_step "OK" "Submodule bootstrap" "$OUT_DIR/bootstrap.log"
 
 SIMULATOR_UDID="$(resolve_simulator_udid "$SIMULATOR")"
 if [ -z "$SIMULATOR_UDID" ]; then
@@ -426,9 +424,9 @@ fi
 
 if [ "$SKIP_BUILD" != "1" ]; then
   run_build_step "Build branch-local iOS app" "build.log" \
-    "$PROJECT_ROOT/scripts/xcodebuild-with-submodules.sh" \
-      -project RemClaw.xcodeproj \
-      -scheme RemClaw \
+    xcodebuild \
+      -project Rem.xcodeproj \
+      -scheme Rem \
       -configuration "$CONFIGURATION" \
       -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
       -derivedDataPath "$DERIVED_DATA_PATH" \

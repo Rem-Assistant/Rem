@@ -298,7 +298,7 @@ public final class MockAutomationInputsService: AutomationInputsProviding {
             AutomationInputRow(
                 capability: .cloudBrowser,
                 state: .comingSoon,
-                detail: "Cloud-browser findings aren't collected for Daily Brief yet."),
+                detail: "Not part of your check-in yet."),
         ]
     }
 }

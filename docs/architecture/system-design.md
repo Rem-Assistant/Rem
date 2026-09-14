@@ -271,10 +271,6 @@ voice-worker/
 
 ### 6d. OpenClaw Deploy Artifacts (new hackathon directory)
 
-> Historical layout. This hosted-deploy artifact tree is operated separately and
-> is not part of the open-core repo (see the Open-Core Boundary in the top-level
-> `README.md`).
-
 ```
 deploy/openclaw-gateway/
 ├── Dockerfile               # Runs openclaw gateway daemon

@@ -54,6 +54,8 @@ export interface GatewayAgentTurnOptions {
   message: string;
   /** Stable key per task/routine/user so runs thread into ONE loadable chat, not many one-offs. */
   sessionKey: string;
+  /** Caller-owned identity for retry-safe dispatch; generated for legacy callers when absent. */
+  idempotencyKey?: string;
   /** Per-turn budget in ms for the async `chat` final event. Defaults to 120s. */
   timeoutMs?: number;
   /**
@@ -64,6 +66,8 @@ export interface GatewayAgentTurnOptions {
   coldStartTimeoutMs?: number;
   /** Thinking level for the turn. Empty string = gateway default (matches the app). */
   thinking?: string;
+  /** Cancels an in-flight turn through `chat.abort`; pre-aborted signals do not dispatch. */
+  signal?: AbortSignal;
 }
 
 /** Why the gateway path could not produce a turn (structured — callers branch on it). */
@@ -71,6 +75,7 @@ export type GatewayAgentTurnFailureReason =
   | 'no_gateway' // user has no gateway provisioned
   | 'wake_failed' // gateway exists but did not become ready in time
   | 'timeout' // chat.send acked but no final event within timeoutMs
+  | 'cancelled' // caller cancellation was confirmed by chat.abort
   | 'error'; // gateway rejected chat.send, or an unexpected transport error
 
 /**
@@ -480,12 +485,13 @@ export async function injectAssistantMessageOnGateway(opts: {
 export async function runAgentTurnOnGateway(
   opts: GatewayAgentTurnOptions,
 ): Promise<GatewayAgentTurnResult> {
+  if (opts.signal?.aborted) return { ok: false, reason: 'cancelled' };
   const warmTimeoutMs = opts.timeoutMs ?? DEFAULT_AGENT_TURN_TIMEOUT_MS;
   const coldTimeoutMs = opts.coldStartTimeoutMs ?? COLD_START_AGENT_TURN_TIMEOUT_MS;
 
   try {
     // Dynamic import so a module-load of this service (and its caller chain) never eagerly
-    // pulls db/pool + required env.
+    // pulls db/pool + required env — matches gateway.service's own lazy fly.service import.
     const { getGatewayCredentials, getSetupPassword, wakeGatewayForUser } = await import(
       './gateway.service.js'
     );
@@ -507,7 +513,10 @@ export async function runAgentTurnOnGateway(
     const timeoutMs = wake.action === 'start' ? coldTimeoutMs : warmTimeoutMs;
 
     const setupPassword = await getSetupPassword(opts.userId).catch(() => undefined);
-    const idempotencyKey = randomUUID();
+    const idempotencyKey = opts.idempotencyKey ?? randomUUID();
+    // Cancellation may arrive during credential lookup or a slow wake. Recheck immediately
+    // before opening the socket so an already-cancelled acting turn never dispatches.
+    if (opts.signal?.aborted) return { ok: false, reason: 'cancelled' };
 
     // Give the socket headroom beyond the turn budget for the connect handshake +
     // wake slack; the inner event-wait timer is the real bound and fires first.
@@ -524,18 +533,43 @@ export async function runAgentTurnOnGateway(
         new Promise<GatewayAgentTurnResult>((resolve) => {
           let runId: string | null = null;
           let settled = false;
+          let aborting = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
 
           const finish = (result: GatewayAgentTurnResult) => {
             if (settled) return;
             settled = true;
-            clearTimeout(timer);
+            if (timer) clearTimeout(timer);
+            opts.signal?.removeEventListener('abort', onAbort);
             resolve(result);
           };
 
-          const timer = setTimeout(
-            () => finish({ ok: false, reason: 'timeout' }),
-            timeoutMs,
-          );
+          const abortRun = async (reason: 'timeout' | 'cancelled') => {
+            if (settled || aborting) return;
+            aborting = true;
+            const abort = await request('chat.abort', {
+              sessionKey: opts.sessionKey,
+              runId: runId ?? idempotencyKey,
+            }).catch(() => null);
+            if (abort?.ok && abort.result?.aborted === true) {
+              finish({ ok: false, reason });
+              return;
+            }
+            finish({
+              ok: false,
+              reason: 'error',
+              message: 'Turn exceeded its local wait and remote cancellation was not confirmed',
+            });
+          };
+          const onAbort = () => { void abortRun('cancelled'); };
+
+          timer = setTimeout(() => { void abortRun('timeout'); }, timeoutMs);
+          opts.signal?.addEventListener('abort', onAbort, { once: true });
+          // `addEventListener` does not replay an abort that raced the registration.
+          if (opts.signal?.aborted) {
+            finish({ ok: false, reason: 'cancelled' });
+            return;
+          }
 
           // ── Correlating a `chat` final/error to OUR turn ─────────────────────
           // The gateway ALWAYS stamps `runId` on the broadcast final/error

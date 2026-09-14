@@ -1,6 +1,6 @@
 import AVFAudio
 import Foundation
-import OpenClawKit
+import RemKit
 
 @MainActor
 protocol BufferedMP3AudioPlaying {

@@ -138,7 +138,8 @@ function deps(overrides: Partial<SignalIngestDependencies> = {}): SignalIngestDe
     // through to the REAL `runRelevancePassForUser`, which opens the pg pool and calls a model —
     // turning pure unit tests into ones that need a database and a GMI key.
     judgeRelevance: async () => ({
-      considered: 0, act: 0, drop: 0, unjudged: 0, unavailableReason: null,
+      considered: 0, act: 0, drop: 0, append: 0, mention: 0, completed: 0,
+      unjudged: 0, unavailableReason: null,
     }),
     ...overrides,
   };
@@ -743,7 +744,7 @@ describe('a quiet mailbox is not a failed run', () => {
     users: 1, usersSkipped: 0, sources: 1, sourcesSkipped: 0, sourcesFailed: 0,
     ingested: 0, duplicates: 0, writesFailed: 0, failed: 0,
     // Relevance counters are reported but deliberately excluded from the failure arithmetic.
-    judged: 0, judgedAct: 0, judgedDrop: 0, judgeUnjudged: 0, judgeUnavailable: 0,
+    judged: 0, judgedAct: 0, judgedDrop: 0, judgedAppend: 0, judgedMention: 0, judgedComplete: 0, judgeUnjudged: 0, judgeUnavailable: 0,
   };
 
   // OBSERVED before this fix, through the real executor/descriptor/batch: NOW=2026-08-10T15:00:00Z
@@ -780,14 +781,14 @@ describe('formatSignalIngestSummary', () => {
     const line = formatSignalIngestSummary({
       users: 3, usersSkipped: 1, sources: 2, sourcesSkipped: 4, sourcesFailed: 1,
       fetched: 9, dropped: 3, outOfWindow: 2, ingested: 4, duplicates: 1, writesFailed: 1, failed: 2,
-      judged: 7, judgedAct: 2, judgedDrop: 4, judgeUnjudged: 1, judgeUnavailable: 1,
+      judged: 7, judgedAct: 2, judgedDrop: 4, judgedAppend: 3, judgedMention: 2, judgedComplete: 1, judgeUnjudged: 1, judgeUnavailable: 1,
     });
     for (const fragment of [
       'users=3', 'skippedUsers=1', 'sources=2', 'skippedSources=4', 'outOfWindow=2',
       'fetched=9', 'dropped=3', 'ingested=4', 'duplicates=1', 'failed=2',
       // The relevance verdicts are part of the run's honest record: a tick that judged 7 signals
       // and hid 4 of them from the user must say so on the line an operator actually reads.
-      'judged=7', 'act=2', 'drop=4', 'unjudged=1', 'unavailable=1',
+      'judged=7', 'act=2', 'drop=4', 'append=3', 'mention=2', 'complete=1', 'unjudged=1', 'unavailable=1',
     ]) {
       expect(line).toContain(fragment);
     }
@@ -798,7 +799,7 @@ describe('signalIngestExitCode', () => {
   const base = {
     users: 1, usersSkipped: 0, sources: 0, sourcesSkipped: 0, sourcesFailed: 0,
     fetched: 0, outOfWindow: 0, dropped: 0, ingested: 0, duplicates: 0, writesFailed: 0, failed: 0,
-    judged: 0, judgedAct: 0, judgedDrop: 0, judgeUnjudged: 0, judgeUnavailable: 0,
+    judged: 0, judgedAct: 0, judgedDrop: 0, judgedAppend: 0, judgedMention: 0, judgedComplete: 0, judgeUnjudged: 0, judgeUnavailable: 0,
   };
 
   /**

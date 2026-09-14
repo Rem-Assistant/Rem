@@ -18,11 +18,11 @@ describe('resolveGatewayUpdateReadiness', () => {
   it('keeps managed Fly updates disabled until the safe-update preflight contract exists', () => {
     const readiness = resolveGatewayUpdateReadiness(
       {
-        gateway_url: 'https://remclaw-00000000.fly.dev',
+        gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
         hosting_provider: 'fly',
       },
       {
-        fly_app_name: 'remclaw-00000000',
+        fly_app_name: 'remclaw-f8679a968c6a',
       },
     );
 
@@ -30,8 +30,8 @@ describe('resolveGatewayUpdateReadiness', () => {
       canUpdate: false,
       status: 'managed_fly_preflight_required',
       hostingProvider: 'fly',
-      gatewayUrl: 'https://remclaw-00000000.fly.dev',
-      managedFlyAppName: 'remclaw-00000000',
+      gatewayUrl: 'https://remclaw-f8679a968c6a.fly.dev',
+      managedFlyAppName: 'remclaw-f8679a968c6a',
     });
     expect(readiness.requiredChecks).toEqual([
       'same_gateway_target',
@@ -45,7 +45,7 @@ describe('resolveGatewayUpdateReadiness', () => {
         id: 'same_gateway_target',
         label: 'Same Gateway Target',
         status: 'ready',
-        message: 'Managed Fly app remclaw-00000000 is known. Machine and volume checks still need to run before updates can be enabled.',
+        message: 'Managed Fly app remclaw-f8679a968c6a is known. Machine and volume checks still need to run before updates can be enabled.',
       },
       {
         id: 'backup_or_snapshot',
@@ -103,7 +103,7 @@ describe('resolveGatewayUpdateReadiness', () => {
 
     expect(resolveGatewayUpdateReadiness(
       {
-        gateway_url: 'https://remclaw-00000000.fly.dev',
+        gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
         hosting_provider: 'fly',
       },
       {
@@ -122,11 +122,11 @@ describe('resolveGatewayUpdateReadiness', () => {
   it('returns defensive copies of approved targets, capability arrays, and preflight checks', () => {
     const first = resolveGatewayUpdateReadiness(
       {
-        gateway_url: 'https://remclaw-00000000.fly.dev',
+        gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
         hosting_provider: 'fly',
       },
       {
-        fly_app_name: 'remclaw-00000000',
+        fly_app_name: 'remclaw-f8679a968c6a',
       },
     );
     first.approvedTargets[0].requiredCapabilities.push('mutated.capability');
@@ -134,11 +134,11 @@ describe('resolveGatewayUpdateReadiness', () => {
 
     const second = resolveGatewayUpdateReadiness(
       {
-        gateway_url: 'https://remclaw-00000000.fly.dev',
+        gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
         hosting_provider: 'fly',
       },
       {
-        fly_app_name: 'remclaw-00000000',
+        fly_app_name: 'remclaw-f8679a968c6a',
       },
     );
 

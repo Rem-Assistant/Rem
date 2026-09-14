@@ -298,23 +298,23 @@ run_build() {
   platform="$1"
   stamp="$(date '+%Y%m%d-%H%M%S')"
   slug="$(git_sha | cut -c1-12)-$platform-$stamp"
-  run_root="$EVIDENCE_ROOT/RemClaw-iteration2-$slug"
+  run_root="$EVIDENCE_ROOT/Rem-iteration2-$slug"
   derived="$run_root/DerivedData"
   log_path="$run_root/build.log"
   mkdir -p "$run_root" "$derived" "$run_root/tmp"
 
   if [ "$platform" = "ios" ]; then
-    scheme="RemClaw"
+    scheme="Rem"
     destination="platform=iOS Simulator,id=$SIMULATOR_ID"
   else
-    scheme="RemClawMac"
+    scheme="RemMac"
     destination="platform=macOS"
   fi
 
   log "building platform=$platform sha=$(git_sha) evidence=$run_root"
   set +e
   TMPDIR="$run_root/tmp" xcodebuild \
-    -project "$PROJECT_ROOT/RemClaw.xcodeproj" \
+    -project "$PROJECT_ROOT/Rem.xcodeproj" \
     -scheme "$scheme" \
     -destination "$destination" \
     -derivedDataPath "$derived" \

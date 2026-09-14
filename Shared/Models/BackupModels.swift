@@ -158,7 +158,7 @@ enum BackupFailure: Error, Equatable, Sendable {
     var localizedDescription: String {
         switch self {
         case .cliNotInstalled:
-            return "OpenClaw CLI not installed. Install it from Settings → General → Set Up to enable backups."
+            return "Gateway CLI not installed. Install it from Settings → General → Set Up to enable backups."
         case .spawnFailed(let underlying):
             return "Could not launch openclaw: \(underlying)"
         case .cliExited(let code, let stderr):

@@ -105,7 +105,23 @@ router.delete('/digests/:id', requireJwt, async (req: Request, res: Response) =>
   try {
     const userId = (req as Request & { userId: string }).userId;
     const result = await pool.query(
-      `DELETE FROM digests WHERE id = $1::uuid AND user_id = $2::uuid RETURNING id`,
+      `WITH deleted AS (
+         DELETE FROM digests WHERE id = $1::uuid AND user_id = $2::uuid RETURNING id
+       ), purged_terminal_runtime_copies AS (
+         DELETE FROM rem_agent_runs
+          WHERE user_id = $2::uuid
+            AND session_key LIKE 'rem-digest-%'
+            AND state <> 'running'
+            AND EXISTS (SELECT 1 FROM deleted)
+       ), expiring_active_runtime_copies AS (
+         UPDATE rem_agent_runs
+            SET expires_at = NOW(), updated_at = NOW()
+          WHERE user_id = $2::uuid
+            AND session_key LIKE 'rem-digest-%'
+            AND state = 'running'
+            AND EXISTS (SELECT 1 FROM deleted)
+       )
+       SELECT id FROM deleted`,
       [req.params.id, userId],
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Digest not found' });

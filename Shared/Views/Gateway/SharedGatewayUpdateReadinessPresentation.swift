@@ -29,7 +29,7 @@ struct GatewayUpdateReadinessPresentation {
         case .local:
             return GatewayUpdateReadinessPresentation(
                 status: "Manual update",
-                message: "This Mac gateway runs locally. Update it from the Mac app or OpenClaw tooling; Rem will not mutate local runtime files from this gateway detail screen.",
+                message: "This Mac gateway runs locally. Update it from the Mac app or gateway tooling; Rem will not mutate local runtime files from this gateway detail screen.",
                 icon: "desktopcomputer",
                 tint: .secondary,
                 versionTargets: .manualUpdate(providerName: "Local Mac")
@@ -82,7 +82,7 @@ struct GatewayUpdateReadinessPresentation {
                 message: backendReadiness.message,
                 icon: "questionmark.circle",
                 tint: .secondary,
-                versionTargets: .unavailable(reason: "Rem cannot match this backend update status to an approved OpenClaw release yet.")
+                versionTargets: .unavailable(reason: "Rem cannot match this backend update status to an approved gateway release yet.")
             )
         }
     }
@@ -93,7 +93,7 @@ struct GatewayVersionTargetsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("OpenClaw Versions")
+            Text("Gateway Versions")
                 .font(DesignTokens.Typography.caption1.weight(.semibold))
                 .foregroundStyle(.primary)
 
@@ -207,7 +207,7 @@ extension Array where Element == GatewayVersionTargetPresentation {
         return [
             GatewayVersionTargetPresentation(
                 id: "current",
-                title: "Current OpenClaw",
+                title: "Current gateway",
                 status: "Current",
                 detail: "This is the existing gateway Rem will update in place after readiness checks pass\(managedFlyAppName.map { " for \($0)" } ?? "").",
                 icon: "checkmark.circle.fill",
@@ -229,7 +229,7 @@ extension Array where Element == GatewayVersionTargetPresentation {
         [
             GatewayVersionTargetPresentation(
                 id: "current",
-                title: "Current OpenClaw",
+                title: "Current gateway",
                 status: "Manual",
                 detail: "\(providerName) updates are managed outside Rem; this screen will not change runtime files or deployment targets.",
                 icon: "wrench.and.screwdriver",
@@ -258,7 +258,7 @@ extension Array where Element == GatewayVersionTargetPresentation {
         [
             GatewayVersionTargetPresentation(
                 id: "current",
-                title: "Current OpenClaw",
+                title: "Current gateway",
                 status: "Unknown",
                 detail: reason,
                 icon: "questionmark.circle",
@@ -312,7 +312,7 @@ private extension String {
         case "backup_or_snapshot":
             return "Rem must create or verify a restorable backup before changing the runtime."
         case "approved_gateway_image":
-            return "Only Rem-tested OpenClaw images can be offered from this screen."
+            return "Only Rem-tested gateway images can be offered from this screen."
         case "post_update_health_check":
             return "Auth, chat, sessions, and required capabilities must pass after restart."
         case "rollback_path":

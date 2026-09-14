@@ -31,7 +31,16 @@ import { execSync } from "node:child_process";
 // to be current. Placed here, the messages a user received since the last tick are already rows by
 // the time the brief is authored. Like memories:extract it is OFF by default and self-no-ops
 // unless SIGNAL_INGEST_ENABLED is set, so wiring it here is not the same as turning it on.
+//
+// NOTE — keepwarm:run is intentionally NOT in this list. Keeping an active user's Fly
+// gateway resumed only works if we re-touch it faster than its idle-suspend window, and
+// this chain runs every 15 minutes — too slow to prevent a suspend. keepwarm:run is meant
+// to run on its OWN short interval (every ~5 min) as a separate Railway cron entry, gated
+// by GATEWAY_KEEPWARM_ENABLED. See src/scripts/run-keepwarm.ts.
 const JOBS = [
+  "runtime:effects:reconcile",
+  "runtime:prune",
+  "pool:cleanup",
   "memories:extract",
   "signals:ingest",
   "orchestrator:sweep",

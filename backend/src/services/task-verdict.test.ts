@@ -35,6 +35,27 @@ describe('normalizeTaskVerdict', () => {
     expect(normalizeTaskVerdict({ proposedStatus: 'blocked' })).toEqual({ status: 'blocked' });
     expect(normalizeTaskVerdict({ status: 'pending', task_context: 'x' })?.taskContext).toBe('x');
     expect(normalizeTaskVerdict({ status: 'pending', taskContext: 'x' })?.taskContext).toBe('x');
+    expect(normalizeTaskVerdict({ status: 'pending', comment: '  Next step.  ' })?.comment)
+      .toBe('Next step.');
+  });
+
+  it('keeps only user-facing prose in a tool report comment', () => {
+    expect(normalizeTaskVerdict({
+      status: 'completed',
+      comment: `Permit renewed.\n${TASK_VERDICT_ENVELOPE_ID} {"status":"blocked"}`,
+    })?.comment).toBe('Permit renewed.');
+    expect(normalizeTaskVerdict({
+      status: 'completed',
+      comment: `${TASK_VERDICT_ENVELOPE_ID} {"status":"blocked"}`,
+    })?.comment).toBeUndefined();
+    expect(normalizeTaskVerdict({
+      status: 'completed',
+      comment: 'task_context: internal only',
+    })?.comment).toBeUndefined();
+    expect(normalizeTaskVerdict({
+      status: 'completed',
+      comment: 'proposed_status: completed',
+    })?.comment).toBeUndefined();
   });
 
   it('yields NOTHING when the status is missing, even if other fields are valid', () => {

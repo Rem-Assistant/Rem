@@ -341,6 +341,34 @@ describe('injectAssistantMessageOnGateway', () => {
 });
 
 describe('runAgentTurnOnGateway final-event capture', () => {
+  it('uses the caller idempotency key as the gateway run identity', async () => {
+    let sentParams: Record<string, unknown> | undefined;
+    withGatewayRequesterMock.mockImplementationOnce(
+      async (_url: string, _token: string, fn: CallbackFn) => {
+        let handler: ((event: string, payload: unknown) => void) | null = null;
+        const request: RequestFn = async (_method, params) => {
+          sentParams = params;
+          queueMicrotask(() => handler?.('chat', {
+            runId: 'run-stable',
+            sessionKey: 'agent:main:rem-task-1',
+            state: 'final',
+            message: { text: 'Done.' },
+          }));
+          return { ok: true, result: { runId: 'run-stable' } };
+        };
+        return fn(request, { onEvent: (h) => { handler = h; } });
+      },
+    );
+
+    await runAgentTurnOnGateway({
+      userId: 'u1',
+      message: 'work',
+      sessionKey: 'rem-task-1',
+      idempotencyKey: 'dispatch-stable',
+    });
+    expect(sentParams?.idempotencyKey).toBe('dispatch-stable');
+  });
+
   // THE REGRESSION TEST: gateway broadcasts the CANONICAL session key while we
   // sent the bare one. Before the fix, the exact-match filter dropped this and
   // the turn timed out. Now it must resolve ok:true.
@@ -462,7 +490,9 @@ describe('runAgentTurnOnGateway final-event capture', () => {
   it('ignores a final for a DIFFERENT session key', async () => {
     withGatewayRequesterMock.mockImplementationOnce(
       async (_url: string, _token: string, fn: CallbackFn) => {
-        const request: RequestFn = async () => ({ ok: true, result: { runId: 'run-xyz' } });
+        const request: RequestFn = async (method) => method === 'chat.abort'
+          ? { ok: true, result: { aborted: true } }
+          : { ok: true, result: { runId: 'run-xyz' } };
         let handler: ((event: string, payload: unknown) => void) | null = null;
         const events: GatewayEventTap = { onEvent: (h) => { handler = h; } };
         queueMicrotask(() => {
@@ -485,6 +515,61 @@ describe('runAgentTurnOnGateway final-event capture', () => {
       timeoutMs: 40,
     });
     expect(result).toEqual({ ok: false, reason: 'timeout' });
+  });
+
+  it('reports uncertainty when timeout cancellation is not confirmed', async () => {
+    withGatewayRequesterMock.mockImplementationOnce(
+      async (_url: string, _token: string, fn: CallbackFn) => {
+        const request: RequestFn = async (method) => method === 'chat.abort'
+          ? { ok: false, error: { message: 'not found' } }
+          : { ok: true, result: { runId: 'run-xyz' } };
+        return fn(request, { onEvent: () => {} });
+      },
+    );
+    const result = await runAgentTurnOnGateway({
+      userId: 'u1', message: 'x', sessionKey: 'rem-task-1', timeoutMs: 10,
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'error' });
+  });
+
+  it('aborts an in-flight turn when the caller cancels', async () => {
+    const controller = new AbortController();
+    let abortParams: Record<string, unknown> | undefined;
+    withGatewayRequesterMock.mockImplementationOnce(
+      async (_url: string, _token: string, fn: CallbackFn) => {
+        const request: RequestFn = async (method, params) => {
+          if (method === 'chat.abort') {
+            abortParams = params;
+            return { ok: true, result: { aborted: true } };
+          }
+          queueMicrotask(() => controller.abort());
+          return { ok: true, result: { runId: 'run-cancelled' } };
+        };
+        return fn(request, { onEvent: () => {} });
+      },
+    );
+    const result = await runAgentTurnOnGateway({
+      userId: 'u1', message: 'x', sessionKey: 'rem-task-1',
+      idempotencyKey: 'dispatch-cancelled', signal: controller.signal,
+    });
+    expect(result).toEqual({ ok: false, reason: 'cancelled' });
+    expect(abortParams).toEqual({ sessionKey: 'rem-task-1', runId: 'dispatch-cancelled' });
+  });
+
+  it('does not dispatch when cancellation arrives during gateway wake', async () => {
+    const controller = new AbortController();
+    let finishWake: (value: unknown) => void = () => {};
+    wakeGatewayForUserMock.mockReturnValueOnce(new Promise((resolve) => { finishWake = resolve; }));
+
+    const pending = runAgentTurnOnGateway({
+      userId: 'u1', message: 'x', sessionKey: 'rem-task-1', signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(wakeGatewayForUserMock).toHaveBeenCalledWith('u1'));
+    controller.abort();
+    finishWake({ gatewayReady: true, action: 'noop' });
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'cancelled' });
+    expect(withGatewayRequesterMock).not.toHaveBeenCalled();
   });
 
   it('surfaces a gateway error state', async () => {

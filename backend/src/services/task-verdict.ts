@@ -50,21 +50,12 @@
  * ── THE TWO CARRIERS ─────────────────────────────────────────────────────────────────
  * The verdict is the same typed object either way; only the carrier differs.
  *
- *   `tool_call`  PRIMARY. The agent invokes a `rem_task_report` tool and the gateway
- *                delivers its arguments to us as a structured `agent`/`stream:"tool"` event
- *                (`gateway-agent.service.ts` `ObservedToolCall`). Schema-validated by the
- *                gateway before we ever see it — a real typed round trip, exactly the shape
- *                a node command has.
- *
- *                ⚠️ NOT LIVE ON THE DEPLOYED FLEET YET, AND THIS FILE DOES NOT PRETEND IT
- *                IS. No `rem_task_report` tool exists on the pinned gateway image: a hook
- *                cannot register a tool (the hosted gateway's bootstrap hook, operated
- *                separately, is `agent:bootstrap` prompt injection only), so the tool has to arrive as
- *                either a node command served by a node the backend controls, or an MCP
- *                tool wired the way `ensureComposioMcpWired` wires Composio's. Both are
- *                fleet operations with their own release step — see the PR body. The reader
- *                ships now so that landing the tool is a config change, not a code change,
- *                and so the path is under test before it carries traffic.
+ *   `tool_call`  PRIMARY. Rem's shared runtime registers `rem_task_report` directly with its
+ *                OpenAI-compatible provider, validates the returned arguments at the runtime
+ *                boundary, and persists the normalized call for replay. This is a reporting
+ *                tool, not an acting tool: the product route remains the only task mutator.
+ *                Transitional gateway paths can still deliver the same typed object through
+ *                their observed tool-event carrier when available.
  *
  *   `envelope`   TRANSITIONAL, and what actually carries the verdict today. One line the
  *                model emits, `<id> <json>`, extracted and REMOVED before the prose is
@@ -81,6 +72,11 @@
  *
  * Deliberately NOT here: any regex over prose. `parseProposedStatusFromText` is deleted.
  */
+
+import {
+  stripStatusMarkerLine,
+  stripTaskContextMarker,
+} from './task-description.js';
 
 /** The statuses a run may decide on. Mirrors the `proposed_status` column's domain. */
 export type ProposedStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
@@ -124,6 +120,7 @@ export const TASK_VERDICT_ENVELOPE_ID = 'rem.task_verdict.v1';
 
 /** Cap on the free-text half of a verdict, matching `MAX_AGENT_CONTEXT_CHARS`. */
 const MAX_TASK_CONTEXT_CHARS = 4000;
+const MAX_TASK_REPORT_COMMENT_CHARS = 2000;
 
 /** A run's machine decision. Every field is validated; nothing here is raw model output. */
 export interface TaskVerdict {
@@ -131,6 +128,8 @@ export interface TaskVerdict {
   status: ProposedStatus;
   /** The run's own confidence in [0,1], when the carrier reported one. */
   confidence?: number;
+  /** Actionable 1-3 sentence result shown in the task activity feed when reported by a tool. */
+  comment?: string;
   /**
    * The run's CURRENT-STATE summary for `tasks.description`'s agent block (migration 120).
    * Optional here: the legacy `task_context:` marker still carries it on paths that have
@@ -172,6 +171,14 @@ function normalizeTaskContext(value: unknown): string | undefined {
   return trimmed ? trimmed.slice(0, MAX_TASK_CONTEXT_CHARS) : undefined;
 }
 
+function normalizeTaskReportComment(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = stripStatusMarkerLine(
+    stripTaskContextMarker(stripVerdictEnvelopeLines(value)),
+  ).trim();
+  return trimmed ? trimmed.slice(0, MAX_TASK_REPORT_COMMENT_CHARS) : undefined;
+}
+
 /**
  * THE ONE NORMALIZER. Both carriers funnel through this, so a verdict read from a tool call
  * and a verdict read from an envelope cannot diverge in what they accept.
@@ -186,10 +193,12 @@ export function normalizeTaskVerdict(value: unknown): TaskVerdict | undefined {
   const status = normalizeStatus(readField(value, 'status', 'proposed_status', 'proposedStatus'));
   if (!status) return undefined;
   const confidence = normalizeConfidence(readField(value, 'confidence'));
+  const comment = normalizeTaskReportComment(readField(value, 'comment'));
   const taskContext = normalizeTaskContext(readField(value, 'task_context', 'taskContext'));
   return {
     status,
     ...(confidence !== undefined ? { confidence } : {}),
+    ...(comment !== undefined ? { comment } : {}),
     ...(taskContext !== undefined ? { taskContext } : {}),
   };
 }
@@ -197,8 +206,15 @@ export function normalizeTaskVerdict(value: unknown): TaskVerdict | undefined {
 /** A tool invocation observed on the run's gateway event stream. */
 export interface ObservedToolCallLike {
   name: string;
+  toolCallId?: string;
   args?: unknown;
   result?: unknown;
+}
+
+export interface TaskVerdictToolCallRead {
+  verdict: TaskVerdict;
+  /** Provider identity when available; callers may derive a run-scoped fallback when absent. */
+  toolCallId?: string;
 }
 
 /**
@@ -212,13 +228,25 @@ export interface ObservedToolCallLike {
 export function readVerdictFromToolCalls(
   calls: readonly ObservedToolCallLike[] | undefined,
 ): TaskVerdict | undefined {
+  return readTaskVerdictToolCall(calls)?.verdict;
+}
+
+/** Read the same final verdict while retaining the proposal call identity needed for execution. */
+export function readTaskVerdictToolCall(
+  calls: readonly ObservedToolCallLike[] | undefined,
+): TaskVerdictToolCallRead | undefined {
   if (!calls?.length) return undefined;
   for (let i = calls.length - 1; i >= 0; i -= 1) {
     const call = calls[i];
     if (typeof call?.name !== 'string') continue;
     if (!TASK_VERDICT_TOOL_ALIASES.has(call.name.trim().toLowerCase())) continue;
     const verdict = normalizeTaskVerdict(call.args) ?? normalizeTaskVerdict(call.result);
-    if (verdict) return verdict;
+    if (verdict) {
+      const toolCallId = typeof call.toolCallId === 'string' && call.toolCallId.trim()
+        ? call.toolCallId.trim()
+        : undefined;
+      return { verdict, ...(toolCallId ? { toolCallId } : {}) };
+    }
   }
   return undefined;
 }
@@ -246,6 +274,15 @@ const ENVELOPE_LINE_ANY = new RegExp(
   `^[\\s>*_\`#-]*${TASK_VERDICT_ENVELOPE_ID.replace(/\./g, '\\.')}\\b`,
   'i',
 );
+
+/** Remove versioned machine-verdict lines without treating their payload as a decision. */
+export function stripVerdictEnvelopeLines(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !ENVELOPE_LINE_ANY.test(line))
+    .join('\n')
+    .trim();
+}
 
 /** A run's reply split into the prose the user reads and the verdict the backend acts on. */
 export interface ReplyVerdictRead {
@@ -289,11 +326,7 @@ export function readVerdictFromReply(text: string | null | undefined): ReplyVerd
   // Strip on the LOOSER match: a machine line that failed to parse is still a machine line,
   // and letting a malformed one through to the activity feed is the failure
   // `RUN_REPLY_WITHOUT_PROSE` exists to catch.
-  const body = text
-    .split('\n')
-    .filter((line) => !ENVELOPE_LINE_ANY.test(line))
-    .join('\n')
-    .trim();
+  const body = stripVerdictEnvelopeLines(text);
 
   return { ...(verdict ? { verdict } : {}), body };
 }
@@ -303,9 +336,9 @@ export function readVerdictFromReply(text: string | null | undefined): ReplyVerd
  * and the autonomous sweep, so the two run paths cannot drift into asking for different
  * shapes — the drift that let `proposed_status:` mean three things at once.
  *
- * It names both carriers because the model may or may not have the tool: with the tool it is
- * a schema-validated call, without it the envelope line. Asking for both is not redundancy,
- * it is what makes landing the tool a no-op for this prompt.
+ * It names both carriers because transitional runtimes may not expose the tool: with the tool it
+ * is a schema-validated call, without it the envelope line. The envelope remains a compatibility
+ * fallback while provider/model support is monitored.
  */
 export const TASK_VERDICT_PROMPT =
   'When — and only when — you are confident this task\'s status should change, report it as a ' +

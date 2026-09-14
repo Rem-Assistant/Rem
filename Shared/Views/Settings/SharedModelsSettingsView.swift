@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
-import OpenClawChatUI
-import OpenClawKit
+import RemChatUI
+import RemKit
 
 // MARK: - Provider display names (shared)
 
@@ -39,9 +39,9 @@ enum ModelPickerPresentation {
 
     static func composerTitle(
         selectionID: String,
-        models: [OpenClawChatModelChoice]
+        models: [RemChatModelChoice]
     ) -> String {
-        guard selectionID != OpenClawChatViewModel.defaultModelSelectionID else {
+        guard selectionID != RemChatViewModel.defaultModelSelectionID else {
             return automaticTitle
         }
         if let selected = models.first(where: { $0.selectionID == selectionID }) {
@@ -62,7 +62,7 @@ enum ModelPickerPresentation {
 enum ModelPickerPolicy {
     struct ProviderGroup: Identifiable, Equatable {
         let provider: String
-        let models: [OpenClawChatModelChoice]
+        let models: [RemChatModelChoice]
         var id: String { provider }
     }
 
@@ -119,9 +119,9 @@ enum ModelPickerPolicy {
     }
 
     static func settingsModels(
-        _ models: [OpenClawChatModelChoice],
+        _ models: [RemChatModelChoice],
         runtimeConfiguredProviderIDs: [String]
-    ) -> [OpenClawChatModelChoice] {
+    ) -> [RemChatModelChoice] {
         models.filter {
             isProviderUsable(
                 $0.provider,
@@ -144,7 +144,7 @@ enum ModelPickerPolicy {
     /// best-effort and may be empty even while session metadata still names a provider-qualified
     /// override.
     static func providerIDsForRuntimeEvidence(
-        models: [OpenClawChatModelChoice],
+        models: [RemChatModelChoice],
         requestedSelectionID: String
     ) -> [String] {
         var providerIDs = models.map(\.provider)
@@ -159,8 +159,8 @@ enum ModelPickerPolicy {
 
     static func resolvedDefaultChoice(
         defaultModelLabel: String,
-        models: [OpenClawChatModelChoice]
-    ) -> OpenClawChatModelChoice? {
+        models: [RemChatModelChoice]
+    ) -> RemChatModelChoice? {
         let reference = defaultModelReference(from: defaultModelLabel)
         guard !reference.isEmpty else { return nil }
         if let exactSelection = models.first(where: { reference == $0.selectionID }) {
@@ -174,7 +174,7 @@ enum ModelPickerPolicy {
 
     static func resolvedDefaultName(
         defaultModelLabel: String,
-        models: [OpenClawChatModelChoice]
+        models: [RemChatModelChoice]
     ) -> String {
         if let choice = resolvedDefaultChoice(defaultModelLabel: defaultModelLabel, models: models) {
             return choice.name
@@ -184,10 +184,10 @@ enum ModelPickerPolicy {
     }
 
     static func composerModels(
-        _ models: [OpenClawChatModelChoice],
+        _ models: [RemChatModelChoice],
         runtimeConfiguredProviderIDs: [String],
         defaultModelLabel _: String
-    ) -> [OpenClawChatModelChoice] {
+    ) -> [RemChatModelChoice] {
         let relevant = models.filter { choice in
             // Rem's managed provider is a product entitlement, not a blanket BYOK credential.
             // Only the canonical MiniMax model is offered; sibling GMI catalog entries would
@@ -207,7 +207,7 @@ enum ModelPickerPolicy {
     }
 
     static func composerGroups(
-        _ models: [OpenClawChatModelChoice],
+        _ models: [RemChatModelChoice],
         runtimeConfiguredProviderIDs: [String],
         defaultModelLabel: String,
         hasAuthoritativeProviderEvidence: Bool = true
@@ -237,12 +237,12 @@ enum ModelPickerPolicy {
 
     static func effectiveSelectionID(
         requestedSelectionID: String,
-        models: [OpenClawChatModelChoice],
-        catalogCompleteness: OpenClawChatModelCatalogCompleteness,
+        models: [RemChatModelChoice],
+        catalogCompleteness: RemChatModelCatalogCompleteness,
         runtimeConfiguredProviderIDs: [String],
         defaultModelLabel: String
     ) -> String {
-        guard requestedSelectionID != OpenClawChatViewModel.defaultModelSelectionID else {
+        guard requestedSelectionID != RemChatViewModel.defaultModelSelectionID else {
             return requestedSelectionID
         }
         // A degraded `models.list` can still contain config-synthesized rows (Rem gateways normally
@@ -264,12 +264,12 @@ enum ModelPickerPolicy {
         ).map(\.selectionID))
         return visibleSelectionIDs.contains(requestedSelectionID)
             ? requestedSelectionID
-            : OpenClawChatViewModel.defaultModelSelectionID
+            : RemChatViewModel.defaultModelSelectionID
     }
 
     static func explicitProviderID(from selectionID: String) -> String? {
         let selection = selectionID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard selection != OpenClawChatViewModel.defaultModelSelectionID,
+        guard selection != RemChatViewModel.defaultModelSelectionID,
               let separator = selection.firstIndex(of: "/")
         else { return nil }
         let canonical = canonicalProviderID(String(selection[..<separator]))
@@ -393,7 +393,7 @@ enum RuntimeProviderAuthEvidence: Equatable {
     }
 
     func canReconcileExplicitSelection(_ selectionID: String) -> Bool {
-        guard selectionID != OpenClawChatViewModel.defaultModelSelectionID else { return true }
+        guard selectionID != RemChatViewModel.defaultModelSelectionID else { return true }
         switch self {
         case .legacyPartial(let providerIDs):
             guard let providerID = ModelPickerPolicy.explicitProviderID(from: selectionID) else {
@@ -549,7 +549,7 @@ extension GatewaySessionProviding {
 /// chat view model's `modelChoices`).
 struct SharedModelsSettingsView: View {
 
-    let models: [OpenClawChatModelChoice]
+    let models: [RemChatModelChoice]
     /// Provider identifiers confirmed by the active gateway runtime. A key saved only on this
     /// device is intentionally not included.
     var runtimeConfiguredProviderIDs: [String] = []
@@ -580,7 +580,7 @@ struct SharedModelsSettingsView: View {
 
     /// Models grouped by provider, matching the composer's ordering: providers
     /// sorted by display name, models alphabetically. Filtered by the search box.
-    private var groupedModels: [(provider: String, models: [OpenClawChatModelChoice])] {
+    private var groupedModels: [(provider: String, models: [RemChatModelChoice])] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let filtered = query.isEmpty ? models : models.filter { choice in
             ModelUserFacingCopy.modelName(choice.name).lowercased().contains(query)
@@ -601,7 +601,7 @@ struct SharedModelsSettingsView: View {
 
     /// Groups actually rendered: only raw providers authorized by the managed service or active
     /// runtime. Search narrows this same usable set; it never reveals an unavailable catalog.
-    private var visibleGroups: [(provider: String, models: [OpenClawChatModelChoice])] {
+    private var visibleGroups: [(provider: String, models: [RemChatModelChoice])] {
         groupedModels.compactMap { group in
             let usable = ModelPickerPolicy.settingsModels(
                 group.models,
@@ -619,7 +619,7 @@ struct SharedModelsSettingsView: View {
     /// this is what tames Bedrock's 12-Claude-variant wall.
     private struct ModelFamily: Identifiable {
         let base: String
-        let models: [OpenClawChatModelChoice]
+        let models: [RemChatModelChoice]
         var id: String { base }
         var isMulti: Bool { models.count > 1 }
     }
@@ -652,9 +652,9 @@ struct SharedModelsSettingsView: View {
 
     /// Collapses a provider's models into families, preserving the incoming
     /// (alphabetical) order of first appearance.
-    private func families(for models: [OpenClawChatModelChoice]) -> [ModelFamily] {
+    private func families(for models: [RemChatModelChoice]) -> [ModelFamily] {
         var order: [String] = []
-        var buckets: [String: [OpenClawChatModelChoice]] = [:]
+        var buckets: [String: [RemChatModelChoice]] = [:]
         for model in models {
             let base = Self.familyBase(for: model.name)
             if buckets[base] == nil { order.append(base) }
@@ -805,7 +805,7 @@ struct SharedModelsSettingsView: View {
     /// Collapsing every provider is what keeps the
     /// default page scannable instead of a wall of regional variants.
     @ViewBuilder
-    private func providerDisclosure(_ group: (provider: String, models: [OpenClawChatModelChoice])) -> some View {
+    private func providerDisclosure(_ group: (provider: String, models: [RemChatModelChoice])) -> some View {
         let modelFamilies = families(for: group.models)
         DisclosureGroup(isExpanded: Binding(
             get: { isGroupExpanded(group.provider) },
@@ -883,7 +883,7 @@ struct SharedModelsSettingsView: View {
         return suffix.isEmpty ? name : suffix
     }
 
-    private func modelCatalogRow(_ choice: OpenClawChatModelChoice, label: String? = nil) -> some View {
+    private func modelCatalogRow(_ choice: RemChatModelChoice, label: String? = nil) -> some View {
         Text(ModelUserFacingCopy.modelName(label ?? choice.name))
             .font(DesignTokens.Typography.body)
             .foregroundColor(DesignTokens.Color.labelPrimary)

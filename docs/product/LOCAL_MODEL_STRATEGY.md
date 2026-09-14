@@ -1,7 +1,7 @@
 # Local Model Strategy
 
 This note is the product/technical recommendation for issue
-[#570](https://github.com/Rem-Assistant/RemClaw/issues/570). It answers whether
+[#570](https://github.com/Rem-Assistant/Rem/issues/570). It answers whether
 Rem should support a free/local model path and how that fits beside paid cloud
 gateway value.
 

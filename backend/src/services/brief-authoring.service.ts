@@ -2,18 +2,18 @@
  * AI-authored daily brief prose (docs/rebuild/27-BRIEF-AS-AI-AND-LANDING.md).
  *
  * The daily brief is a REGENERATING ARTIFACT (a snapshot), not a chat. Its PROSE — the
- * full-brief `markdown` the app expands into — is written by the user's OWN gateway agent
- * (Move-2, gateway-agent.service.ts), in Rem's voice, instead of the deterministic
- * template `composeBriefProse` assembles.
+ * full-brief `markdown` the app expands into — is written through the payer-authorized runtime,
+ * in Rem's voice, instead of the deterministic template `composeBriefProse` assembles.
  *
  * TWO SESSIONS, decoupled (Phase 1 re-architecture):
  *
  *   1. AUTHORING — the prose for a cron cycle is written in a FRESH context every time.
- *      `authoringSessionKey` mints an EPHEMERAL, per-run key (`rem-brief-author-<localday>-<runId>`)
+ *      `authoringSessionKey` uses a durable semantic attempt (`rem-brief-author-<localday>-<attemptId>`)
  *      so the authoring turn NEVER replays prior turns. This is what kills the old failure
- *      mode: the previous design re-prompted ONE stable session every cycle, so history
+ *      mode: the previous design re-prompted ONE stable conversation every cycle, so history
  *      accumulated → the model started replying "NO_REPLY", the prose went stale, and it
- *      read like a chat. A fresh context per cycle produces clean, current prose each time.
+ *      read like a chat. The attempt survives worker recovery for idempotent result replay, while
+ *      changed semantic input rotates to a fresh context.
  *
  *   2. CONVERSATION — the durable session the USER replies into is SEPARATE
  *      (`conversationSessionKey` = `rem-orchestrator`). Capability-aware Summary clients receive
@@ -26,7 +26,7 @@
  *
  * We CACHE the latest card (`markdown`) + a lead `summary` in Postgres (`daily_briefs`,
  * migration 033) so the fast GET /api/v1/brief handler can read it back without ever
- * running a 120s gateway turn inline. Mirrors digest.service.ts.
+ * running a model turn inline. Mirrors digest.service.ts.
  *
  * DATE is resolved in the USER'S LOCAL timezone (not UTC) — so the brief says "Sunday
  * evening", not "Monday" at 8pm Sunday Pacific. Timezone source: `user_checkins.timezone`
@@ -40,17 +40,17 @@
  * Lifecycle (principle 2), never-throws per user:
  *   - create/update : `authorBriefForUser` gathers today's brief. An empty live snapshot
  *                     returns without claiming, persisting, or delivering an assistant turn.
- *                     Non-empty snapshots run one FRESH-context gateway turn, UPSERT the
+ *                     Non-empty snapshots run one FRESH-context runtime turn, UPSERT the
  *                     markdown for (user_id, today's local date), and seed the conversation
  *                     session. A later cron tick re-authors as the day's tasks move.
  *   - read          : `readAuthoredBrief` returns today's cached card + summary (or null).
- *   - recover       : any gateway failure (no gateway / wake / timeout / error) returns a
+ *   - recover       : any authoring-runtime failure returns a
  *                     structured skip and writes NOTHING — the read path falls back to the
  *                     deterministic prose, and a good prior row is never overwritten by a
  *                     failed turn.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool, type DatabaseQueryable } from '../db/pool.js';
 import { gatherBrief, type BriefItem, type DailyBrief } from './brief.service.js';
@@ -63,7 +63,7 @@ import {
   runAgentTurnOnGateway,
   injectAssistantMessageOnGateway,
 } from './gateway-agent.service.js';
-import { gmiChat } from './gmi.service.js';
+import { runAgentTurnOnSharedRuntime } from '../runtime/agent-runtime.service.js';
 import { mayChargeRemManagedKey, resolveModelRuntimeMode } from './run-block.js';
 import {
   briefSurfacedTaskIds,
@@ -72,7 +72,7 @@ import {
 } from './task-staleness.service.js';
 
 /**
- * Feature flag. Fleet-wide brief authoring (a per-user gateway turn on a cron) stays OFF
+ * Feature flag. Fleet-wide AI brief authoring on a cron stays OFF
  * unless an operator opts in via `BRIEF_AI_AUTHORING_ENABLED` (truthy: 1/true/yes/on).
  * Mirrors `isSweepEnabled` (orchestrator-sweep.service.ts).
  */
@@ -263,10 +263,10 @@ export function localDateHeading(now: Date, timezone: string): string {
 }
 
 /**
- * The EPHEMERAL, per-run authoring session key. A fresh key every cycle means the authoring
+ * The attempt-scoped authoring session key. A fresh key for changed semantic work means the authoring
  * turn runs in a CLEAN context (no replayed history) — the fix for accumulating-history
  * staleness + "NO_REPLY". `runId` disambiguates concurrent/successive runs in the same
- * local day. This session is a throwaway; the user never opens it.
+ * local day. Recovery reuses the same attempt id; the user never opens this session.
  */
 export function authoringSessionKey(now: Date, timezone: string, runId: string): string {
   return `rem-brief-author-${localDateStamp(now, timezone)}-${runId}`;
@@ -292,15 +292,15 @@ export function legacyConversationSessionKey(now: Date, timezone: string): strin
 
 /** Outcome of authoring one user's brief. Structured so the cron can log a summary. */
 export type BriefAuthoringStatus =
-  | 'authored' // gateway wrote the prose; row upserted
-  | 'empty' // nothing worth a brief today; skipped the gateway turn and wrote no chat message
-  | 'skipped_slot' // off-slot, or this slot's brief was already authored today → no gateway wake
-  | 'skipped_gateway'; // no gateway / wake / timeout / error → wrote nothing, retry later
+  | 'authored' // authorized runtime wrote the prose; row upserted
+  | 'empty' // nothing worth a brief today; skipped the model turn and wrote no chat message
+  | 'skipped_slot' // off-slot, or this slot's brief was already authored today
+  | 'skipped_gateway'; // compatibility wire name: runtime/delivery unavailable, retry later
 
 export interface BriefAuthoringResult {
   userId: string;
   status: BriefAuthoringStatus;
-  /** Structured gateway reason on the skipped_gateway path, else null. */
+  /** Structured runtime/delivery reason on the compatibility skipped_gateway path, else null. */
   reason: string | null;
 }
 
@@ -364,7 +364,7 @@ export function isPermanentGatewaySkip(reason: string | null): boolean {
 const BRIEF_SYSTEM_PROMPT =
   // The brief is an ORCHESTRATOR TRIAGE opener, not a flat recap (docs/rebuild/34, O's
   // 2026-07-05 direction): tapping the brief lands the user in this chat, so its latest
-  // message should update them on the day AND help them triage. Same gateway turn / session /
+  // message should update them on the day AND help them triage. Same authoring turn / session /
   // cache — only the instruction is sharpened from "summarize" to "summarize + offer a
   // concrete triage action per attention item." Still strictly grounded in the provided data.
   "You are Rem, opening the user's daily triage in your own voice — warm, concise, and " +
@@ -695,7 +695,7 @@ async function claimBriefAuthoring(
   if (claimedRow) {
     // A changed empty/non-empty state may supersede the completed artifact in the same slot.
     // The lease is acquired while prior prose remains readable; only successful replacement
-    // persistence changes it, so a failed gateway turn cannot erase the last good card.
+    // persistence changes it, so a failed runtime turn cannot erase the last good card.
     if (claimedRow.source !== source) {
       return { leaseToken, artifact: null };
     }
@@ -749,11 +749,25 @@ async function releaseBriefAuthoring(
   briefDate: string,
   slot: TimeOfDay,
   leaseToken: string,
+  preserveAuthoringAttempt = false,
 ): Promise<void> {
+  if (preserveAuthoringAttempt) {
+    await pool.query(
+      `/* preserve_authoring_attempt */
+       UPDATE daily_brief_artifacts
+          SET authoring_lease_token = NULL, authoring_lease_expires_at = NULL, updated_at = NOW()
+        WHERE user_id = $1::uuid AND brief_date = $2::date AND authored_slot = $3
+          AND authoring_lease_token = $4::uuid`,
+      [userId, briefDate, slot, leaseToken],
+    );
+    return;
+  }
   await pool.query(
     `WITH preserved AS (
        UPDATE daily_brief_artifacts
-          SET authoring_lease_token = NULL, authoring_lease_expires_at = NULL, updated_at = NOW()
+          SET authoring_lease_token = NULL, authoring_lease_expires_at = NULL,
+              authoring_attempt_id = NULL, authoring_attempt_kind = NULL,
+              authoring_attempt_fingerprint = NULL, updated_at = NOW()
         WHERE user_id = $1::uuid AND brief_date = $2::date AND authored_slot = $3
           AND markdown IS NOT NULL AND authoring_lease_token = $4::uuid
      )
@@ -762,6 +776,79 @@ async function releaseBriefAuthoring(
         AND markdown IS NULL AND authoring_lease_token = $4::uuid`,
     [userId, briefDate, slot, leaseToken],
   );
+}
+
+/**
+ * Bind semantic authoring work to a durable attempt identity while this worker owns the lease.
+ * Reclaiming an expired lease with the same prompt preserves the attempt; changed inputs rotate it.
+ */
+async function bindBriefAuthoringAttempt(
+  userId: string,
+  briefDate: string,
+  slot: TimeOfDay,
+  leaseToken: string,
+  kind: 'enriched' | 'task-only',
+  prompt: string,
+): Promise<string | null> {
+  const fingerprint = createHash('sha256').update(prompt).digest('hex');
+  const freshAttemptId = randomUUID();
+  const result = await pool.query<{ authoring_attempt_id: string }>(
+    `/* bind_brief_authoring_attempt */
+     UPDATE daily_brief_artifacts
+        SET authoring_attempt_id = CASE
+              WHEN authoring_attempt_id IS NOT NULL
+               AND authoring_attempt_kind = $5
+               AND authoring_attempt_fingerprint = $6
+              THEN authoring_attempt_id
+              ELSE $7::uuid
+            END,
+            authoring_attempt_kind = $5,
+            authoring_attempt_fingerprint = $6,
+            updated_at = NOW()
+      WHERE user_id = $1::uuid AND brief_date = $2::date AND authored_slot = $3
+        AND authoring_lease_token = $4::uuid
+      RETURNING authoring_attempt_id`,
+    [userId, briefDate, slot, leaseToken, kind, fingerprint, freshAttemptId],
+  );
+  return result.rows[0]?.authoring_attempt_id ?? null;
+}
+
+interface BoundBriefAuthoringAttempt {
+  attemptId: string;
+  kind: 'enriched' | 'task-only';
+  fingerprint: string;
+}
+
+async function readBoundBriefAuthoringAttempt(
+  userId: string,
+  briefDate: string,
+  slot: TimeOfDay,
+  leaseToken: string,
+): Promise<BoundBriefAuthoringAttempt | null> {
+  const result = await pool.query<{
+    authoring_attempt_id: string | null;
+    authoring_attempt_kind: string | null;
+    authoring_attempt_fingerprint: string | null;
+  }>(
+    `/* read_brief_authoring_attempt */
+     SELECT authoring_attempt_id, authoring_attempt_kind, authoring_attempt_fingerprint
+       FROM daily_brief_artifacts
+      WHERE user_id = $1::uuid AND brief_date = $2::date AND authored_slot = $3
+        AND authoring_lease_token = $4::uuid
+      LIMIT 1`,
+    [userId, briefDate, slot, leaseToken],
+  );
+  const row = result.rows[0];
+  if (
+    !row?.authoring_attempt_id ||
+    (row.authoring_attempt_kind !== 'enriched' && row.authoring_attempt_kind !== 'task-only') ||
+    !row.authoring_attempt_fingerprint
+  ) return null;
+  return {
+    attemptId: row.authoring_attempt_id,
+    kind: row.authoring_attempt_kind,
+    fingerprint: row.authoring_attempt_fingerprint,
+  };
 }
 
 /** Persist the canonical artifact and Agenda cache in one statement owned by the lease holder. */
@@ -775,7 +862,7 @@ async function completeBriefArtifact(
   headline: string | null,
   source: BriefArtifact['source'],
   inputSnapshot?: BriefInputSnapshot,
-  authoringProducer: 'gateway' | 'backend_model' = 'gateway',
+  authoringProducer: 'gateway' | 'rem_runtime' = 'gateway',
   authoringModel: string | null = 'gateway',
 ): Promise<BriefArtifact | null> {
   const result = await pool.query<{
@@ -1204,8 +1291,8 @@ export async function readAuthoredBrief(
 
 /**
  * Atomically read today's authored prose and whether that exact authored slot was delivered to
- * `sessionKey`. Keeping both values in one PostgreSQL statement prevents a newer slot from
- * authorizing an older prose snapshot between separate reads.
+ * `sessionKey`. The prose is independently canonical for Rem-owned card/push surfaces; delivery
+ * authorizes only conversation continuity. One statement prevents cross-revision mismatches.
  */
 export async function readAuthoredBriefDelivery(
   userId: string,
@@ -1215,7 +1302,14 @@ export async function readAuthoredBriefDelivery(
 ): Promise<AuthoredBriefDelivery | null> {
   const result = await db.query(
     `SELECT a.markdown, a.summary, a.headline, a.source, a.revision, b.authored_slot,
-            TRUE AS delivered
+            EXISTS (
+              SELECT 1
+                FROM daily_brief_artifact_deliveries d
+               WHERE d.artifact_id = a.id
+                 AND d.artifact_revision = a.revision
+                 AND d.session_key = $3
+                 AND d.state = 'delivered'
+            ) AS delivered
        FROM daily_briefs b
        JOIN daily_brief_artifacts a
          ON a.user_id = b.user_id
@@ -1223,11 +1317,6 @@ export async function readAuthoredBriefDelivery(
         AND a.authored_slot = b.authored_slot
         AND a.source = 'gateway'
         AND a.markdown = b.markdown
-       JOIN daily_brief_artifact_deliveries d
-         ON d.artifact_id = a.id
-        AND d.artifact_revision = a.revision
-        AND d.session_key = $3
-        AND d.state = 'delivered'
       WHERE b.user_id = $1::uuid AND b.brief_date = $2::date
         AND b.source = 'gateway'
         AND a.markdown IS NOT NULL AND BTRIM(a.markdown) <> ''
@@ -1250,7 +1339,7 @@ export async function readAuthoredBriefDelivery(
     markdown: md,
     summary,
     headline,
-    delivered: true,
+    delivered: row.delivered === true,
     source: row.source,
     revision: row.revision,
     authoredSlot: row.authored_slot as TimeOfDay,
@@ -1311,14 +1400,15 @@ export interface AuthorBriefOptions {
 }
 
 /**
- * Author (and cache) one user's daily brief prose via their gateway agent, in a FRESH
- * context each cycle (ephemeral `rem-brief-author-<localday>-<runId>` session — no replayed
- * history, so the prose never goes stale or degrades into "NO_REPLY"). The card is cached in
+ * Author (and cache) one user's daily brief prose through the payer-authorized runtime, in a FRESH
+ * context each cycle (ephemeral `rem-brief-author-<localday>-<leaseToken>` session — no replayed
+ * history, so prose never goes stale or degrades into "NO_REPLY"). Rem-managed authoring uses the
+ * observe-only shared runtime; transitional BYOK task-only authoring uses the user's gateway. The card is cached in
  * `daily_briefs` and the persistent CONVERSATION session key (`rem-orchestrator`) — the
  * one the app opens and the user replies into — is recorded on the row. Authored prose is
  * appended with `chat.inject`, which does not execute a turn or persist a hidden prompt. Called
  * by BOTH the cron and
- * each check-in. Never throws. On a gateway failure it writes NOTHING (the read path falls
+ * each check-in. Never throws. On an authoring-runtime failure it writes NOTHING (the read path falls
  * back to the deterministic prose, and a good prior card is preserved). On an empty day it
  * skips the AI turn and writes nothing into Today. The deterministic Agenda all-clear remains a
  * live task-store state, not an assistant-authored chat message.
@@ -1343,7 +1433,7 @@ export async function authorBriefForUser(
 
     // Explicit check-ins may be processed after multiple slots became overdue. Once a later slot
     // owns today's canonical pointer, an older requested slot is terminally superseded: do not
-    // spend a gateway turn or append stale prose to Today. The conditional cache upsert below is
+    // spend a model turn or append stale prose to Today. The conditional cache upsert below is
     // the cross-worker race fence; this read is the cheap retry/recovery fast path.
     if (opts.requestedSlot) {
       const canonical = await pool.query<{ authored_slot: TimeOfDay | null }>(
@@ -1370,8 +1460,10 @@ export async function authorBriefForUser(
     // surfacing counter — reads this filtered view, so a day whose only remaining work is stale
     // authors nothing at all rather than an empty-sounding nag.
     const brief = briefWithoutStaleTasks(opts.brief ?? (await gatherBrief(userId, now, timezone)));
-    // Cross-process authoring lease: cron and check-in can overlap, but only one gateway turn may
+    // Cross-process authoring lease: cron and check-in can overlap, but only one model turn may
     // become the canonical Agenda/chat artifact for this user/day/slot.
+    // Compatibility enum: `gateway` still means "AI-authored/non-fallback" in migrations 109/114.
+    // Exact producer provenance is stored separately as `authoring_producer = rem_runtime|gateway`.
     const artifactSource: BriefArtifact['source'] = 'gateway';
     const claim = await claimBriefAuthoring(userId, briefDate, slot, artifactSource);
     if (claim.artifact) {
@@ -1384,6 +1476,7 @@ export async function authorBriefForUser(
     const leaseToken = claim.leaseToken;
 
     let artifact: BriefArtifact | null = null;
+    let preserveSharedAttemptOnRelease = false;
     try {
       const inputSnapshot = opts.inputSnapshot ?? (await opts.collectInput?.());
       if (isBriefEmpty(brief, inputSnapshot)) {
@@ -1395,32 +1488,84 @@ export async function authorBriefForUser(
         return { ...base, status: 'empty', reason: null };
       }
       let authoredText: string | null = null;
-      let authoringProducer: 'gateway' | 'backend_model' = 'gateway';
+      let authoringProducer: 'gateway' | 'rem_runtime' = 'gateway';
       let authoringModel: string | null = 'gateway';
-      if (hasAuthorableBriefInput(inputSnapshot)) {
+      let sharedTerminalResultWasReplay = false;
+      // Resolve payer ownership before any model request. The shared runtime is Rem-managed;
+      // BYOK credentials still live only in the clients' Keychains, so those users must remain
+      // on their own gateway until Rem has an explicit, consented credential transport.
+      const runtimeMode = await resolveModelRuntimeMode(userId);
+      const mayUseSharedRuntime = mayChargeRemManagedKey(runtimeMode);
+      const existingAttempt = await readBoundBriefAuthoringAttempt(
+        userId,
+        briefDate,
+        slot,
+        leaseToken,
+      );
+      if (runtimeMode === 'unknown' && existingAttempt) {
+        // Payer lookup uncertainty cannot erase a previously paid/possibly completed dispatch.
+        // Keep the product binding until ownership is readable again, then replay the same key.
+        preserveSharedAttemptOnRelease = true;
+        return { ...base, status: 'skipped_gateway', reason: 'runtime_mode_unknown' };
+      }
+      const taskOnlyPrompt = buildBriefAuthoringPrompt(
+        brief,
+        localDateHeading(now, timezone),
+      );
+      const shouldResumeTaskOnly = existingAttempt?.kind === 'task-only'
+        && existingAttempt.fingerprint === createHash('sha256').update(taskOnlyPrompt).digest('hex');
+      const runSharedBriefTurn = async (
+        kind: 'enriched' | 'task-only',
+        snapshot?: BriefInputSnapshot,
+      ) => {
+        const message = buildBriefAuthoringPrompt(
+          brief,
+          localDateHeading(now, timezone),
+          snapshot,
+        );
+        const fingerprint = createHash('sha256').update(message).digest('hex');
+        const attemptId = await bindBriefAuthoringAttempt(
+          userId,
+          briefDate,
+          slot,
+          leaseToken,
+          kind,
+          message,
+        );
+        if (!attemptId) return null;
+        const turn = await runAgentTurnOnSharedRuntime({
+          principal: { userId, authority: 'internal_service' },
+          sessionKey: authoringSessionKey(now, timezone, attemptId),
+          idempotencyKey: `rem-brief:${briefDate}:${slot}:${attemptId}:${kind}`,
+          message,
+          timeoutMs: 15_000,
+          temperature: 0.2,
+          maxTokens: 700,
+          toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+        });
+        if (turn.ok) {
+          sharedTerminalResultWasReplay = existingAttempt?.attemptId === attemptId
+            && existingAttempt.kind === kind
+            && existingAttempt.fingerprint === fingerprint;
+        }
+        return turn;
+      };
+      if (hasAuthorableBriefInput(inputSnapshot) && !shouldResumeTaskOnly) {
         // TWO boundaries meet on this branch, and they are independent. Both must hold before
         // the backend model runs; failing either degrades to task-only authoring.
         //
-        // 1. SECURITY BOUNDARY (unchanged): raw connector text must never enter gateway
-        //    chat.send, whose agent runtime has tools and persists the authoring turn. GMI
-        //    chat-completions is a plain backend model call with no tool declaration; only its
-        //    final prose is injected later. THIS is why the branch cannot simply be rerouted to
-        //    the owner's gateway the way #1327 rerouted task runs.
+        // 1. SECURITY BOUNDARY (unchanged): raw connector text must never enter legacy gateway
+        //    chat.send, whose agent runtime has tools and persists the authoring turn. The Rem
+        //    runtime invocation is observe-only with an empty allow-list; only final prose is
+        //    injected later. THIS is why BYOK cannot fall through to the owner's gateway.
         //
-        // 2. PAYER BOUNDARY (new): this call spends the operator's own `GMI_API_KEY`. It is the
-        //    only remaining model call in this backend that does, and — unlike the digest and
-        //    memory-extraction fallbacks that were deleted alongside this change — it is not a
-        //    fallback but the PRIMARY producer for connector-derived input, so deleting it
-        //    would delete the capability rather than redirect it. BYOK is a global per-user
-        //    mode, so a user whose runtime Rem did not provision must not have this one feature
-        //    quietly pick Rem's key: `mayChargeRemManagedKey` is the gate, and it fails closed
-        //    on `unknown`. What `run-block.ts` can and cannot prove about the mode — and the
-        //    managed-Fly BYOK case it cannot yet see — is documented there, not restated here.
+        // 2. PAYER BOUNDARY: the shared runtime spends Rem's provider key. BYOK is a global
+        //    per-user mode, so a user on their own provider must not have this one feature quietly
+        //    pick Rem's key: `mayChargeRemManagedKey` is the gate, and it fails closed on unknown.
         //
         // Ordering: the mode read happens BEFORE the model call, so a blocked user costs one
         // indexed lookup and no provider request at all.
-        const runtimeMode = await resolveModelRuntimeMode(userId);
-        if (!mayChargeRemManagedKey(runtimeMode)) {
+        if (!mayUseSharedRuntime) {
           // WHAT THIS COSTS, STATED HONESTLY. On a day that also has TASKS, we fall through and
           // author from task data only: the brief still ships, minus the connector enrichment.
           // On a CONNECTOR-ONLY day there is nothing left to author from — connector text cannot
@@ -1428,32 +1573,41 @@ export async function authorBriefForUser(
           // that day. That is a real loss, not just a degraded one, and it is the deliberate
           // trade: a brief nobody may pay for is worse than a brief that did not arrive.
           //
-          // Unreachable today. `resolveModelRuntimeMode` returns `rem_managed` for every user
-          // with a gateway (see run-block.ts — Rem's provider is the primary model on every
-          // gateway this backend can address), so nothing currently takes this branch. It is the
-          // enforcement point for when that stops being true.
+          // No current product mutation stores BYOK yet. This is the enforcement point for the
+          // future credential migration, and also the safe fallback for a failed mode lookup.
           if (isTaskBriefEmpty(brief)) {
-            return { ...base, status: 'skipped_gateway', reason: CONNECTOR_MODEL_NOT_OWNED };
+            return {
+              ...base,
+              status: 'skipped_gateway',
+              reason: runtimeMode === 'byok' ? CONNECTOR_MODEL_NOT_OWNED : 'runtime_mode_unknown',
+            };
           }
         } else {
           try {
-            const generated = await gmiChat(
-              [{
-                role: 'user',
-                content: buildBriefAuthoringPrompt(
-                  brief,
-                  localDateHeading(now, timezone),
-                  inputSnapshot,
-                ),
-              }],
-              { temperature: 0.2, maxTokens: 700, timeoutMs: 15_000 },
-            );
-            authoredText = generated.content;
-            authoringProducer = 'backend_model';
-            authoringModel = generated.model;
+            const turn = await runSharedBriefTurn('enriched', inputSnapshot);
+            if (!turn) {
+              return { ...base, status: 'skipped_slot', reason: `authoring_lease_lost_${slot}` };
+            }
+            if (!turn.ok && turn.runState === 'in_progress') {
+              preserveSharedAttemptOnRelease = true;
+              return { ...base, status: 'skipped_gateway', reason: turn.reason };
+            }
+            if (!turn.ok && turn.provenance.billingMode === 'unknown') {
+              preserveSharedAttemptOnRelease = true;
+              return { ...base, status: 'skipped_gateway', reason: 'runtime_mode_unknown' };
+            }
+            if (turn.ok) {
+              authoredText = turn.text;
+              authoringProducer = turn.provenance.persistenceKind;
+              authoringModel = turn.model;
+            }
           } catch {
-            // Connector-only input cannot safely fall through to the tool-capable gateway. When
-            // tasks exist, preserve availability by authoring from task data only.
+            // A rejected lazy import/provider call is the same availability class as a structured
+            // runtime failure here. The distinct task-only dispatch below remains recoverable.
+          }
+          if (authoredText === null) {
+            // Connector-only input cannot safely fall through to the legacy tool-capable gateway.
+            // When tasks exist, preserve availability with a distinct task-only runtime dispatch.
             if (isTaskBriefEmpty(brief)) {
               return { ...base, status: 'skipped_gateway', reason: 'connector_model_unavailable' };
             }
@@ -1463,29 +1617,51 @@ export async function authorBriefForUser(
 
       if (authoredText === null) {
         // FRESH context: a throwaway per-run key means the task-only turn replays no history.
-        const authorKey = authoringSessionKey(now, timezone, randomUUID());
-        const turn = await runAgentTurnOnGateway({
-          userId,
-          sessionKey: authorKey,
-          message: buildBriefAuthoringPrompt(brief, localDateHeading(now, timezone)),
-        });
-        if (!turn.ok) {
-          return { ...base, status: 'skipped_gateway', reason: turn.reason };
+        if (mayUseSharedRuntime) {
+          const turn = await runSharedBriefTurn('task-only');
+          if (!turn) {
+            return { ...base, status: 'skipped_slot', reason: `authoring_lease_lost_${slot}` };
+          }
+          if (!turn.ok) {
+            if (turn.runState === 'in_progress' || turn.provenance.billingMode === 'unknown') {
+              preserveSharedAttemptOnRelease = true;
+            }
+            return { ...base, status: 'skipped_gateway', reason: turn.reason };
+          }
+          authoredText = turn.text;
+          authoringProducer = turn.provenance.persistenceKind;
+          authoringModel = turn.model;
+        } else if (runtimeMode === 'byok') {
+          const turn = await runAgentTurnOnGateway({
+            userId,
+            sessionKey: authoringSessionKey(now, timezone, leaseToken),
+            message: buildBriefAuthoringPrompt(brief, localDateHeading(now, timezone)),
+          });
+          if (!turn.ok) {
+            return { ...base, status: 'skipped_gateway', reason: turn.reason };
+          }
+          authoredText = turn.text;
+        } else {
+          return { ...base, status: 'skipped_gateway', reason: 'runtime_mode_unknown' };
         }
-        authoredText = turn.text;
       }
 
       // Guard: never surface a control token as prose. If the whole turn was one, or the turn
       // was empty, treat it as empty text and write nothing (a good prior card is preserved).
       const markdown = stripControlTokens(authoredText);
       if (!markdown) {
+        // Replay one terminal invalid result for crash/idempotency safety, then rotate it. This
+        // bounds provider spend without permanently poisoning an unchanged slot with NO_REPLY.
+        preserveSharedAttemptOnRelease = authoringProducer === 'rem_runtime'
+          && !sharedTerminalResultWasReplay;
         return { ...base, status: 'skipped_gateway', reason: 'empty_text' };
       }
+      // Valid shared-runtime work remains replayable across artifact persistence failures.
+      preserveSharedAttemptOnRelease = authoringProducer === 'rem_runtime';
       const summary = summarizeBriefLead(markdown);
       // Authored WITH the brief, in the same transaction that persists its prose — the headline is
       // part of the artifact, not something a client re-derives at render time.
       const headline = extractBriefHeadline(markdown);
-
       artifact = await completeBriefArtifact(
         userId,
         briefDate,
@@ -1508,7 +1684,7 @@ export async function authorBriefForUser(
       // lease has already fenced that write to at most once per (user, local day, slot), so "how
       // many briefs have asked about this task" cannot be inflated by a redelivery retry, by a
       // second cron worker, or by the user refreshing the app. Every earlier return path (empty
-      // day, gateway failure, lost lease) leaves the counter alone, which is correct: if no brief
+      // day, runtime failure, lost lease) leaves the counter alone, which is correct: if no brief
       // was written, nobody was asked.
       //
       // Never fatal. A brief that was authored and delivered but whose bookkeeping failed costs the
@@ -1521,10 +1697,16 @@ export async function authorBriefForUser(
         );
       });
     } finally {
-      // Covers structured gateway failures, empty/control-only output, thrown authoring calls,
+      // Covers structured runtime failures, empty/control-only output, thrown authoring calls,
       // and persistence failures. The ownership predicate makes this harmless after completion.
       if (!artifact) {
-        await releaseBriefAuthoring(userId, briefDate, slot, leaseToken).catch(() => undefined);
+        await releaseBriefAuthoring(
+          userId,
+          briefDate,
+          slot,
+          leaseToken,
+          preserveSharedAttemptOnRelease,
+        ).catch(() => undefined);
       }
     }
 

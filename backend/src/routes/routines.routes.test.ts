@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
+vi.mock('../services/routine-policy-lock.service.js', () => ({
+  withRoutinePolicyLock: async (_routineId: string, work: () => Promise<unknown>) => work(),
+}));
 
 vi.mock('../middleware/auth.js', () => ({
   requireJwt: (req: express.Request & { userId?: string }, _res: express.Response, next: express.NextFunction) => {
@@ -69,11 +72,34 @@ describe('routines CRUD routes', () => {
     expect(poolMock.query).not.toHaveBeenCalled();
   });
 
+  it('returns 404 when the backing task is not owned by the user', async () => {
+    poolMock.query.mockResolvedValueOnce({ rows: [] });
+    const res = await request(testApp())
+      .post('/api/v1/routines')
+      .send({ taskId: TASK_ID, deliveryHour: 7, timezone: 'UTC' });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Task not found' });
+  });
+
   it('rejects an out-of-range deliveryHour with 400', async () => {
     const res = await request(testApp())
       .post('/api/v1/routines')
       .send({ taskId: TASK_ID, deliveryHour: 24, timezone: 'UTC' });
     expect(res.status).toBe(400);
+    expect(poolMock.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects blank model identities on create and update', async () => {
+    const created = await request(testApp())
+      .post('/api/v1/routines')
+      .send({ taskId: TASK_ID, deliveryHour: 7, timezone: 'UTC', model: '   ' });
+    const updated = await request(testApp())
+      .patch(`/api/v1/routines/${ROUTINE_ID}`)
+      .send({ model: '' });
+
+    expect(created.status).toBe(400);
+    expect(updated.status).toBe(400);
     expect(poolMock.query).not.toHaveBeenCalled();
   });
 
@@ -108,7 +134,11 @@ describe('POST /routines/:id/run', () => {
     poolMock.query
       // getRoutine — a routine with no model selected
       .mockResolvedValueOnce({ rows: [routineRow({ model: null })] })
-      // runRoutine writes the surfaced "select a model" comment
+      // authoritative routine/task ownership + policy preflight
+      .mockResolvedValueOnce({ rows: [{
+        autonomy: 3, model: null, prompt: null, enabled: true,
+      }] })
+      // intentional manual warning comment
       .mockResolvedValueOnce({ rows: [{ id: 'c3333333-0000-4000-8000-000000000004' }] });
 
     const res = await request(testApp()).post(`/api/v1/routines/${ROUTINE_ID}/run`);

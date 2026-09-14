@@ -6,6 +6,7 @@
  * See docs/rebuild/10-ROUTINES-DESIGN.md.
  */
 
+import { randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { requireJwt } from '../middleware/auth.js';
 import {
@@ -32,6 +33,10 @@ function isValidHour(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 23;
 }
 
+function isValidOptionalModel(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim().length > 0);
+}
+
 /** POST /api/v1/routines — create a routine for the authed user. */
 router.post('/routines', requireJwt, async (req: Request, res: Response) => {
   try {
@@ -54,6 +59,9 @@ router.post('/routines', requireJwt, async (req: Request, res: Response) => {
     ) {
       return res.status(400).json({ error: `autonomy must be an integer ${AUTONOMY_MIN}–${AUTONOMY_MAX}` });
     }
+    if (!isValidOptionalModel(body.model)) {
+      return res.status(400).json({ error: 'model must be a non-empty string or null' });
+    }
 
     const input: CreateRoutineInput = {
       taskId: body.taskId,
@@ -62,10 +70,11 @@ router.post('/routines', requireJwt, async (req: Request, res: Response) => {
       cadence: body.cadence,
       prompt: body.prompt ?? undefined,
       autonomy: body.autonomy,
-      model: body.model ?? undefined,
+      model: typeof body.model === 'string' ? body.model.trim() : body.model ?? undefined,
       enabled: body.enabled,
     };
     const routine = await createRoutine(userId(req), input);
+    if (!routine) return res.status(404).json({ error: 'Task not found' });
     return res.status(201).json(routine);
   } catch (error: any) {
     console.error('[ROUTINES] Error creating routine:', error.message);
@@ -112,6 +121,9 @@ router.patch('/routines/:id', requireJwt, async (req: Request, res: Response) =>
     ) {
       return res.status(400).json({ error: `autonomy must be an integer ${AUTONOMY_MIN}–${AUTONOMY_MAX}` });
     }
+    if (!isValidOptionalModel(body.model)) {
+      return res.status(400).json({ error: 'model must be a non-empty string or null' });
+    }
 
     const updates: UpdateRoutineInput = {};
     if (body.cadence !== undefined) updates.cadence = body.cadence;
@@ -119,7 +131,9 @@ router.patch('/routines/:id', requireJwt, async (req: Request, res: Response) =>
     if (body.timezone !== undefined) updates.timezone = body.timezone;
     if (body.prompt !== undefined) updates.prompt = body.prompt;
     if (body.autonomy !== undefined) updates.autonomy = body.autonomy;
-    if (body.model !== undefined) updates.model = body.model;
+    if (body.model !== undefined) {
+      updates.model = typeof body.model === 'string' ? body.model.trim() : body.model;
+    }
     if (body.enabled !== undefined) updates.enabled = body.enabled;
 
     const routine = await updateRoutine(userId(req), req.params.id, updates);
@@ -141,7 +155,10 @@ router.post('/routines/:id/run', requireJwt, async (req: Request, res: Response)
     const routine = await getRoutine(userId(req), req.params.id);
     if (!routine) return res.status(404).json({ error: 'Routine not found' });
 
-    const result = await runRoutine(routine, new Date());
+    const result = await runRoutine(routine, new Date(), {}, {
+      kind: 'manual',
+      idempotencyKey: `rem-routine-manual-${randomUUID()}`,
+    });
     return res.json(result);
   } catch (error: any) {
     console.error('[ROUTINES] Error running routine:', error.message);

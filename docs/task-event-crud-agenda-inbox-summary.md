@@ -38,8 +38,8 @@
 
 ## Backend changes
 
-- Gateway onboarding config patch (hosted provisioning, operated separately/private)
-  - Added `tasks.create`, `tasks.update`, `tasks.delete` to the node command allowlist.
+- `backend/src/services/deploy.service.ts`
+  - Added `tasks.create`, `tasks.update`, `tasks.delete` to deploy patch allowlist.
 
 ## OpenClaw submodule changes
 

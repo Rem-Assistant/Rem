@@ -1,7 +1,7 @@
 /**
  * Proactive cloud digests.
  *
- * A digest is a short brief the GMI cloud agent writes for a user on a schedule,
+ * A digest is a short brief Rem writes for a user on a schedule,
  * without being asked — making the cloud runtime feel proactive instead of only
  * reacting to per-task `agent-run` calls (see task-agent.service.ts).
  *
@@ -13,35 +13,20 @@
  *
  * Resolution order (never throws past createDigest):
  *   1. Nothing to report → store an 'empty' digest, run no model at all.
- *   2. The user's OWN gateway writes it ('gmi' source, model 'gateway').
- *   3. The gateway could not take the turn → render a deterministic local summary ('fallback').
+ *   2. Rem's shared tool-free runtime writes it ('gmi' source, model 'rem_shared').
+ *   3. The runtime could not take the turn → render a deterministic local summary ('fallback').
  *
- * ── THE GMI FALLBACK IS GONE (and this is why) ───────────────────────────────────────────
- * Step 3 used to be "call GMI MaaS directly on the org `GMI_API_KEY`", with the local render
- * only after THAT failed. `task-agent.service.ts` dropped the same fallback in #1327 because
- * one shared org key billed the operator for the user's work; digests kept theirs, filed as a
- * separate decision. It is not a separate decision. BYOK is a GLOBAL per-user mode — a user is
- * on their own key or on Rem's, for everything — so a path that picks the key independently of
- * the user's mode is wrong by construction, not merely expensive.
+ * The model call is admitted through Rem's durable run and usage ledgers. The service neither
+ * discovers a user's gateway nor calls a provider as an unmetered fallback. Each invocation owns
+ * a fresh dispatch identity, so a terminal provider failure cannot poison a later refresh.
  *
- * The concrete harm this closed: a user whose runtime is their own (a Mac local gateway, a
- * self-hosted or Railway-deployed one — see `run-block.ts` for how that is established) had
- * their digest run on THEIR key on the happy path, and silently on REM's key the moment their
- * gateway failed to wake. Same feature, same user, two different payers, decided by a
- * transient. That is the "hybrid case by case" the rule forbids, and it was invisible: the
- * stored row said `source='gmi'` either way.
- *
- * What a user loses: nothing they can see. The deterministic local render was always the last
- * resort and is unchanged; a gateway failure now reaches it one step sooner. No user-visible
- * copy changed, and no digest that used to be written is no longer written.
- *
- * Connector data (Calendar/Gmail/Slack/Notion) is intentionally out of scope here:
- * those live on the gateway, not the backend. The gather step is the seam where a
- * future connector snapshot would be merged in — see DIGESTS.md "Extending".
+ * Connector data (Calendar/Gmail/Slack/Notion) is intentionally out of scope here. The gather
+ * step is the seam where a future backend-owned connector snapshot can be merged.
  */
 
+import { randomUUID } from 'node:crypto';
 import { pool } from '../db/pool.js';
-import { runAgentTurnOnGateway, utcDateStamp } from './gateway-agent.service.js';
+import { runAgentTurnOnSharedRuntime } from '../runtime/agent-runtime.service.js';
 import { DEFAULT_BRIEF_TIMEZONE, resolveUserTimezone } from './brief-authoring.service.js';
 
 /** Re-export the timezone default so digest callers can source a single fallback. */
@@ -394,7 +379,7 @@ export async function gatherDigestContext(
         AND type = 'calendar_event'
         AND start_date >= $2::timestamptz
         AND start_date < $3::timestamptz
-      ORDER BY start_date ASC
+      ORDER BY start_date ASC, id ASC
       LIMIT 50`,
     [userId, startIso, endIso],
   );
@@ -409,7 +394,8 @@ export async function gatherDigestContext(
         AND status IN ('pending', 'in_progress')
       ORDER BY overdue DESC,
                CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC,
-               start_date ASC NULLS LAST
+               start_date ASC NULLS LAST,
+               id ASC
       LIMIT 50`,
     [userId, startIso],
   );
@@ -422,7 +408,7 @@ export async function gatherDigestContext(
         AND status = 'completed'
         AND updated_at >= $2::timestamptz
         AND updated_at < $3::timestamptz
-      ORDER BY updated_at DESC
+      ORDER BY updated_at DESC, id ASC
       LIMIT 50`,
     [userId, startIso, endIso],
   );
@@ -435,7 +421,7 @@ export async function gatherDigestContext(
       WHERE c.user_id = $1::uuid
         AND c.created_at >= $2::timestamptz
         AND c.created_at < $3::timestamptz
-      ORDER BY c.created_at DESC
+      ORDER BY c.created_at DESC, c.id ASC
       LIMIT 30`,
     [userId, startIso, endIso],
   );
@@ -615,18 +601,24 @@ export async function generateDigest(
   const system = ctx.kind === 'morning_brief' ? MORNING_SYSTEM : EVENING_SYSTEM;
   const userPrompt = buildDigestUserPrompt(ctx);
 
-  // ONE RUNTIME: the user's own gateway (chat.send). The brief threads into a stable,
-  // loadable session (`rem-digest-<kind>`) so the user can open it as a chat. Never throws —
-  // a gateway-less user (or a wake/turn failure) lands on the deterministic local render,
-  // NOT on the operator's key. See the fallback note in this file's header.
-  const viaGateway = await runAgentTurnOnGateway({
-    userId,
-    // Date-scoped so each day's brief is its own session (no unbounded history growth).
-    sessionKey: `rem-digest-${kind}-${utcDateStamp(now)}`,
-    message: `${system}\n\n${userPrompt}`,
-  });
-  if (viaGateway.ok && viaGateway.text.trim()) {
-    return { kind, title, body: viaGateway.text.trim(), source: 'gmi', model: 'gateway' };
+  const message = `${system}\n\n${userPrompt}`;
+  // Digest authoring is model-only. Route it through Rem's tenant-scoped runtime ledger so this
+  // invocation needs no personal gateway, cannot acquire tools, and is metered consistently.
+  let turn;
+  try {
+    turn = await runAgentTurnOnSharedRuntime({
+      principal: { userId, authority: 'internal_service' },
+      sessionKey: `rem-digest-${kind}-${now.toISOString().slice(0, 10).replace(/-/g, '')}`,
+      idempotencyKey: `rem-digest:${kind}:${randomUUID()}`,
+      message,
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+    });
+  } catch (error: unknown) {
+    console.error('[DIGEST] shared runtime failed:', error instanceof Error ? error.message : String(error));
+    return { kind, title, body: renderFallbackBody(ctx), source: 'fallback', model: null };
+  }
+  if (turn.ok && turn.text.trim()) {
+    return { kind, title, body: turn.text.trim(), source: 'gmi', model: turn.model };
   }
 
   return { kind, title, body: renderFallbackBody(ctx), source: 'fallback', model: null };

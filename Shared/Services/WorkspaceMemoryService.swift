@@ -47,7 +47,7 @@ public struct WorkspaceFile: Decodable, Identifiable, Hashable, Sendable {
 /// categories; it uses ``WorkspaceFile/isVisibleMemoryDefault`` below.
 ///
 /// The gateway's `workspace/list` returns **everything** it finds under
-/// `/data/workspace` (the hosted gateway image, operated separately, only skips
+/// `/data/workspace` (see `deploy/openclaw-gateway/src/server.js` — it only skips
 /// `.DS_Store`, `.git`, `node_modules`). That includes machine-state files the
 /// dreaming/memory runtime writes — `phase-signals.json`, `workspace-state.json`,
 /// `memory/.dreams/*`, `.openclaw-wiki/cache/*`, wiki-vault JSON — which are raw
@@ -131,7 +131,7 @@ public extension WorkspaceFile {
 
 /// Detects the seeded onboarding scaffold so we don't present an empty template
 /// as if it were a real memory. `openclaw onboard` seeds IDENTITY/USER/MEMORY with
-/// `writeFileIfMissing` (via the managed onboarding pipeline) — a bare
+/// `writeFileIfMissing` (see `backend/src/services/deploy.service.ts`) — a bare
 /// heading plus placeholder/instruction lines and **no real facts**. We treat a
 /// file as "not written yet" when, after stripping markdown headings, HTML/`<!--`
 /// comments, list-bullet scaffolding, and blank lines, nothing substantive remains.
@@ -236,7 +236,7 @@ public struct WorkspaceFilesResult: Decodable, Sendable {
 
 // MARK: - Concrete (backend proxy)
 
-/// Talks to the RemClaw backend's gateway workspace proxy endpoints, reusing the
+/// Talks to the Rem backend's gateway workspace proxy endpoints, reusing the
 /// app's existing authenticated HTTP client (base URL + JWT + 401-refresh), with
 /// the same `#if os(iOS)` split as ``MemoryService``.
 @MainActor

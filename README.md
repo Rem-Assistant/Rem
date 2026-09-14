@@ -39,27 +39,22 @@ A quick tour of the iPhone app. These are captured from the app's built-in previ
 
 ## Quickstart
 
-This repo uses `openclaw/` as a git submodule. Clone with submodules:
+Clone the repo — no submodules required. The shared OpenClaw client is vendored
+in-tree at `Packages/RemKit`, so a plain clone builds:
 
 ```bash
-git clone --recurse-submodules https://github.com/Rem-Assistant/Rem.git
+git clone https://github.com/Rem-Assistant/Rem.git
 cd Rem
 ```
 
-If you already cloned without submodules, or `make` is unavailable:
+Open `Rem.xcodeproj` in Xcode for local development, then build and test:
 
 ```bash
-make setup        # or: ./scripts/setup.sh
-```
-
-Open `RemClaw.xcodeproj` in Xcode for local development, then build and test:
-
-```bash
-# iOS tests
-make test
+# iOS build
+xcodebuild -project Rem.xcodeproj -scheme Rem -destination 'generic/platform=iOS Simulator' build
 
 # macOS build
-xcodebuild -project RemClaw.xcodeproj -scheme RemClawMac -destination 'platform=macOS' build
+xcodebuild -project Rem.xcodeproj -scheme RemMac -destination 'platform=macOS' build
 
 # Backend (build/typecheck runs offline, no keys or database needed)
 cd backend && npm ci && npm run build
@@ -74,7 +69,7 @@ npm run test:integration
 > arguments, which render individual screens against canned data before the
 > sign-in gate.
 
-Configuration lives in `RemClaw/.env.Debug.xcconfig` / `.env.Release.xcconfig` (iOS) and the matching `RemClawMac/*.xcconfig` files. The committed values are placeholders (`YOUR_BACKEND_URL`, `YOUR_GOOGLE_CLIENT_ID`, `YOUR_POSTHOG_API_KEY`) — point them at your own backend and OAuth/telemetry accounts. Use the untracked `Debug.local.xcconfig` / `Release.local.xcconfig` overrides so your values never land in a commit. Backend config starts from `backend/.env.local.example`.
+Configuration lives in `Rem/.env.Debug.xcconfig` / `.env.Release.xcconfig` (iOS) and the matching `RemMac/*.xcconfig` files. The committed values are placeholders (`YOUR_BACKEND_URL`, `YOUR_GOOGLE_CLIENT_ID`, `YOUR_POSTHOG_API_KEY`) — point them at your own backend and OAuth/telemetry accounts. Use the untracked `Debug.local.xcconfig` / `Release.local.xcconfig` overrides so your values never land in a commit. Backend config starts from `backend/.env.local.example`.
 
 ## Architecture
 
@@ -88,11 +83,11 @@ A thin Node/Express backend handles identity, billing, gateway provisioning, enc
 
 | Path | Purpose |
 |------|---------|
-| `RemClaw/` | iOS app target. |
-| `RemClawMac/` | macOS app target (Dock app + menu bar extra + local gateway host). |
+| `Rem/` | iOS app target. |
+| `RemMac/` | macOS app target (Dock app + menu bar extra + local gateway host). |
 | `Shared/` | Cross-platform models, protocols, services, and SwiftUI surfaces. |
 | `backend/` | Node/Express backend: auth, gateway provisioning, connector APIs. |
-| `openclaw/` | Git submodule for upstream OpenClaw and shared OpenClawKit code. |
+| `Packages/RemKit/` | Vendored gateway client, chat UI, and protocol (forked from upstream OpenClawKit). |
 | `docs/` | Product and architecture documentation. Start at [docs/product/VISION.md](docs/product/VISION.md). |
 
 ## Open-Core Boundary
@@ -107,4 +102,4 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [C
 
 Rem is licensed under the [Apache License 2.0](LICENSE). Third-party components and their licenses are listed in [NOTICE](NOTICE).
 
-The user-facing product name is **Rem** on iOS and macOS. Internal target and repo names still include `RemClaw` for continuity.
+The user-facing product name is **Rem** on iOS and macOS.

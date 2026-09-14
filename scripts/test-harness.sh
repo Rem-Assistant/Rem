@@ -1,5 +1,5 @@
 #!/bin/bash
-# RemClaw Test Harness for per-worktree CI and agent verification
+# Rem Test Harness for per-worktree CI and agent verification
 # Usage: ./scripts/test-harness.sh [--ios|--macos|--all] [--boot-sim] [--verbose]
 set -euo pipefail
 
@@ -13,10 +13,10 @@ DERIVED_DATA_ROOT="${DERIVED_DATA_ROOT:-$BUILD_RESULTS_DIR/DerivedData}"
 RESULT_ROOT="${RESULT_ROOT:-$BUILD_RESULTS_DIR/TestResults}"
 IOS_RETRIES="${IOS_RETRIES:-2}"
 MACOS_ISOLATED_XCTEST_SUITES=(
-  "RemClawMacTests/MacCalendarCommandRouterTests"
+  "RemMacTests/MacCalendarCommandRouterTests"
 )
 MACOS_SWIFT_TESTING_SUITES=(
-  "RemClawMacTests/LaunchAgentSecretsMigratorMacTests"
+  "RemMacTests/LaunchAgentSecretsMigratorMacTests"
 )
 
 VERBOSE="${VERBOSE:-0}"
@@ -53,11 +53,6 @@ log() {
   echo "[$(date '+%H:%M:%S')] $1"
 }
 
-bootstrap_required_submodules() {
-  log "Bootstrapping required submodules"
-  "$PROJECT_ROOT/scripts/bootstrap-submodules.sh"
-}
-
 array_contains() {
   local needle="$1"
   shift
@@ -72,17 +67,15 @@ array_contains() {
   return 1
 }
 
-bootstrap_required_submodules
-
 validate_macos_swift_testing_inventory() {
-  local tests_dir="$PROJECT_ROOT/RemClawMacTests"
+  local tests_dir="$PROJECT_ROOT/RemMacTests"
   local file
   local suite
   local missing=()
 
   while IFS= read -r -d '' file; do
     if grep -Eq '^[[:space:]]*import[[:space:]]+Testing\b' "$file"; then
-      suite="RemClawMacTests/$(basename "$file" .swift)"
+      suite="RemMacTests/$(basename "$file" .swift)"
       if ! array_contains "$suite" "${MACOS_SWIFT_TESTING_SUITES[@]}"; then
         missing+=("$suite")
       fi
@@ -271,8 +264,8 @@ run_ios_tests() {
     log "iOS test attempt $attempt/$max_attempts ($destination)"
 
     run_xcodebuild_logged "$log_path" \
-      xcodebuild -project RemClaw.xcodeproj \
-      -scheme RemClaw \
+      xcodebuild -project Rem.xcodeproj \
+      -scheme Rem \
       -configuration Debug \
       -destination "$destination" \
       -derivedDataPath "$derived_data" \
@@ -340,8 +333,8 @@ run_macos_tests() {
 
   log "macOS isolated XCTest phase"
   run_xcodebuild_logged "$isolated_xctest_log_path" \
-    xcodebuild -project RemClaw.xcodeproj \
-      -scheme RemClawMac \
+    xcodebuild -project Rem.xcodeproj \
+      -scheme RemMac \
       -configuration Debug \
       -destination "$MACOS_DEST" \
       -derivedDataPath "$derived_data" \
@@ -357,8 +350,8 @@ run_macos_tests() {
 
   log "macOS remaining XCTest phase"
   run_xcodebuild_logged "$remaining_xctest_log_path" \
-    xcodebuild -project RemClaw.xcodeproj \
-      -scheme RemClawMac \
+    xcodebuild -project Rem.xcodeproj \
+      -scheme RemMac \
       -configuration Debug \
       -destination "$MACOS_DEST" \
       -derivedDataPath "$derived_data" \
@@ -374,8 +367,8 @@ run_macos_tests() {
 
   log "macOS Swift Testing phase"
   run_xcodebuild_logged "$swift_testing_log_path" \
-    xcodebuild -project RemClaw.xcodeproj \
-      -scheme RemClawMac \
+    xcodebuild -project Rem.xcodeproj \
+      -scheme RemMac \
       -configuration Debug \
       -destination "$MACOS_DEST" \
       -derivedDataPath "$derived_data" \
@@ -394,7 +387,7 @@ run_macos_tests() {
 }
 
 main() {
-  log "RemClaw Test Harness"
+  log "Rem Test Harness"
   log "Platform: $PLATFORM"
   log "Project: $PROJECT_ROOT"
   echo ""

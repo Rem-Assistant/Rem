@@ -25,13 +25,13 @@ struct ContainedIcon: View {
 
 typealias SettingsIcon = ContainedIcon
 
-// MARK: - OpenClaw Runtime Icon
+// MARK: - Rem Runtime Icon
 
-/// The downloaded OpenClaw vector, shared by the iOS and macOS Settings roots.
-/// Unlike `ContainedIcon`, this preserves the mark's own red and cyan colors.
-struct OpenClawRuntimeIcon: View {
+/// The Rem brand mark, shared by the iOS and macOS Settings roots.
+/// Unlike `ContainedIcon`, this preserves the mark's own colors.
+struct RemRuntimeIcon: View {
     var body: some View {
-        Image("OpenClawLogo")
+        Image("RemLogo")
             .resizable()
             .scaledToFit()
             .frame(width: 28, height: 28)

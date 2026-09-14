@@ -21,6 +21,7 @@
  */
 
 import { pool } from '../db/pool.js';
+import { withRoutinePolicyLock } from './routine-policy-lock.service.js';
 import {
   AUTONOMY_MAX,
   type RoutineSchedule,
@@ -137,15 +138,17 @@ export function buildRunReport(params: {
   };
 }
 
-/** Create a routine for a user, applying column defaults. Returns the stored row. */
+/** Create a routine only when its backing task belongs to the same user. */
 export async function createRoutine(
   userId: string,
   input: CreateRoutineInput,
-): Promise<RoutineSchedule> {
+): Promise<RoutineSchedule | null> {
   const result = await pool.query(
     `INSERT INTO routine_schedules
        (user_id, task_id, cadence, delivery_hour, timezone, prompt, autonomy, model, enabled)
-     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9)
+     SELECT $1::uuid, task.id, $3, $4, $5, $6, $7, $8, $9
+       FROM tasks task
+      WHERE task.id = $2::uuid AND task.user_id = $1::uuid
      RETURNING ${ROUTINE_RETURNING}`,
     [
       userId,
@@ -160,7 +163,7 @@ export async function createRoutine(
     ],
   );
   // No gateway-cron sync: the backend scheduler (run-routines.ts) reads this row.
-  return formatRoutine(result.rows[0]);
+  return result.rows[0] ? formatRoutine(result.rows[0]) : null;
 }
 
 /** List a user's routines, newest first. */
@@ -209,8 +212,9 @@ export async function updateRoutine(
   id: string,
   updates: UpdateRoutineInput,
 ): Promise<RoutineSchedule | null> {
-  const { assignments, values } = buildUpdateAssignments(updates);
-  if (assignments.length === 0) return getRoutine(userId, id);
+  return withRoutinePolicyLock(id, async () => {
+    const { assignments, values } = buildUpdateAssignments(updates);
+    if (assignments.length === 0) return getRoutine(userId, id);
 
   const idIndex = values.length + 1;
   const userIndex = values.length + 2;
@@ -224,7 +228,8 @@ export async function updateRoutine(
   );
   if (!result.rows.length) return null;
   // No gateway-cron re-sync: the scheduler always reads the latest row at run time.
-  return formatRoutine(result.rows[0]);
+    return formatRoutine(result.rows[0]);
+  });
 }
 
 /** Enable/pause a routine (scoped to the user). */
@@ -233,7 +238,8 @@ export async function setRoutineEnabled(
   id: string,
   enabled: boolean,
 ): Promise<RoutineSchedule | null> {
-  const result = await pool.query(
+  return withRoutinePolicyLock(id, async () => {
+    const result = await pool.query(
     `UPDATE routine_schedules SET enabled = $3
       WHERE id = $1::uuid AND user_id = $2::uuid
       RETURNING ${ROUTINE_RETURNING}`,
@@ -242,17 +248,20 @@ export async function setRoutineEnabled(
   if (!result.rows.length) return null;
   // enable → the scheduler starts running it; disable → the scheduler skips it
   // (run-routines.ts filters `enabled = TRUE`). No gateway-cron job to pause.
-  return formatRoutine(result.rows[0]);
+    return formatRoutine(result.rows[0]);
+  });
 }
 
 /** Delete a routine (scoped to the user). Returns true when a row was removed. */
 export async function deleteRoutine(userId: string, id: string): Promise<boolean> {
-  const result = await pool.query(
+  return withRoutinePolicyLock(id, async () => {
+    const result = await pool.query(
     `DELETE FROM routine_schedules WHERE id = $1::uuid AND user_id = $2::uuid RETURNING id`,
     [id, userId],
   );
   // Deleting the row is sufficient: the backend scheduler only sees existing rows.
-  return result.rows.length > 0;
+    return result.rows.length > 0;
+  });
 }
 
 /**

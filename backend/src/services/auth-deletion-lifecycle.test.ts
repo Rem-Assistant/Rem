@@ -23,9 +23,7 @@ vi.mock('../db/pool.js', () => ({
   pool: poolMock,
   createDedicatedDatabaseClient: createDedicatedDatabaseClientMock,
 }));
-vi.mock('./gateway/hosted-provisioning.js', () => ({
-  getHostedGatewayProvisioning: () => flyServiceMock,
-}));
+vi.mock('./fly.service.js', () => flyServiceMock);
 vi.mock('jsonwebtoken', () => ({ default: jwtMock }));
 vi.mock('../config/env.js', () => ({
   env: {

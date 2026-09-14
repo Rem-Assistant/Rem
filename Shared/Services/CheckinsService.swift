@@ -29,7 +29,7 @@ public extension CheckinsProviding {
 
 // MARK: - Concrete (backend REST)
 
-/// Talks to the RemClaw Express backend check-in endpoints. Reuses the app's authenticated
+/// Talks to the Rem Express backend check-in endpoints. Reuses the app's authenticated
 /// HTTP client for base-URL + JWT + 401-refresh, exactly like `ComposioService` — the same
 /// `#if os(iOS)` transport split, no new auth path.
 @MainActor

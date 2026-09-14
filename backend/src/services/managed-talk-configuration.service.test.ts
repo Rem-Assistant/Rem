@@ -13,17 +13,13 @@ const gatewayPairMock = vi.hoisted(() => ({
   patchGatewayConfig: vi.fn(),
   patchGatewayConfigHttp: vi.fn(),
 }));
-const entitlementMock = vi.hoisted(() => ({ getCanonicalEntitlement: vi.fn() }));
+const entitlementMock = vi.hoisted(() => ({ getCanonicalEntitlementWithClient: vi.fn() }));
 
 vi.mock('../config/env.js', () => ({ env: { BACKEND_PUBLIC_URL: 'https://api.remclaw.test' } }));
 vi.mock('./gateway.service.js', () => gatewayServiceMock);
-vi.mock('./gateway/hosted-provisioning.js', () => ({
-  getHostedGatewayProvisioning: () => flyServiceMock,
-}));
+vi.mock('./fly.service.js', () => flyServiceMock);
 vi.mock('./gateway-pair.service.js', () => gatewayPairMock);
-vi.mock('./entitlement/entitlement-provider.js', () => ({
-  getEntitlementProvider: () => entitlementMock,
-}));
+vi.mock('./iap/iap-identity.service.js', () => entitlementMock);
 vi.mock('./gateway-lifecycle-lock.service.js', () => ({
   tryWithUserGatewayLifecycleMutationLock: vi.fn(),
   withUserGatewayLifecycleLock: vi.fn(),
@@ -44,10 +40,10 @@ describe('managed Talk ownership reconciliation', () => {
     process.env.ELEVENLABS_API_KEY = 'current-managed-key';
     process.env.MANAGED_TALK_FENCED_WRITER_ROLLOUT_COMPLETE = 'true';
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValue({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: null,
@@ -63,7 +59,7 @@ describe('managed Talk ownership reconciliation', () => {
         },
       },
     });
-    entitlementMock.getCanonicalEntitlement.mockResolvedValue({ isActive: true });
+    entitlementMock.getCanonicalEntitlementWithClient.mockResolvedValue({ isActive: true });
     gatewayServiceMock.promoteManagedTalkDesiredCredentialWithClient.mockResolvedValue({
       fingerprint: crypto.createHash('sha256').update('current-managed-key').digest('hex'),
       generation: 1,
@@ -97,10 +93,10 @@ describe('managed Talk ownership reconciliation', () => {
 
   it('preserves an alternate provider and voice even when its credential is temporarily unavailable', async () => {
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValueOnce({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: crypto.createHash('sha256').update('former-managed-key').digest('hex'),
@@ -136,10 +132,10 @@ describe('managed Talk ownership reconciliation', () => {
   it('rotates only the credential whose fingerprint is owned by Rem', async () => {
     const formerKey = 'former-managed-key';
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValueOnce({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: crypto.createHash('sha256').update(formerKey).digest('hex'),
@@ -166,7 +162,7 @@ describe('managed Talk ownership reconciliation', () => {
     )).resolves.toBe('repaired');
 
     expect(gatewayPairMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       { talk: { providers: { elevenlabs: { apiKey: 'current-managed-key' } } } },
       'setup-password',
@@ -177,12 +173,12 @@ describe('managed Talk ownership reconciliation', () => {
   it('keeps an inactive managed key installed while legacy wake writers may still run', async () => {
     const managedFingerprint = crypto.createHash('sha256').update('current-managed-key').digest('hex');
     process.env.MANAGED_TALK_FENCED_WRITER_ROLLOUT_COMPLETE = 'false';
-    entitlementMock.getCanonicalEntitlement.mockResolvedValueOnce({ isActive: false });
+    entitlementMock.getCanonicalEntitlementWithClient.mockResolvedValueOnce({ isActive: false });
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValueOnce({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: managedFingerprint,
@@ -214,8 +210,8 @@ describe('managed Talk ownership reconciliation', () => {
       generation: 2,
     });
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValueOnce({
-      gateway_url: 'https://remclaw-00000000.fly.dev', gateway_token: 'gateway-token', hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000', fly_machine_id: 'machine-id', fly_volume_id: 'volume-id',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev', gateway_token: 'gateway-token', hosting_provider: 'fly',
+      fly_app_name: 'remclaw-f8679a968c6a', fly_machine_id: 'machine-id', fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: crypto.createHash('sha256').update(formerKey).digest('hex'),
       managed_talk_desired_credential_fingerprint: crypto.createHash('sha256').update(formerKey).digest('hex'),
       managed_talk_credential_generation: 1,
@@ -264,7 +260,7 @@ describe('managed Talk ownership reconciliation', () => {
     )).resolves.toBe('repaired');
 
     expect(gatewayPairMock.patchGatewayConfigHttp).toHaveBeenCalledWith(
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       { talk: { providers: { elevenlabs: { apiKey: 'current-managed-key' } } } },
       'setup-password',
@@ -309,10 +305,10 @@ describe('managed Talk ownership reconciliation', () => {
     process.env.ELEVENLABS_API_KEY = 'older-managed-key';
     process.env.ELEVENLABS_API_KEY_GENERATION = '1';
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValueOnce({
-      gateway_url: 'https://remclaw-00000000.fly.dev',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
       gateway_token: 'gateway-token',
       hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000',
+      fly_app_name: 'remclaw-f8679a968c6a',
       fly_machine_id: 'machine-id',
       fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: newerFingerprint,
@@ -344,8 +340,8 @@ describe('managed Talk ownership reconciliation', () => {
     process.env.ELEVENLABS_API_KEY = oldKey;
     process.env.ELEVENLABS_API_KEY_GENERATION = '1';
     gatewayServiceMock.getManagedTalkTargetWithClient.mockResolvedValueOnce({
-      gateway_url: 'https://remclaw-00000000.fly.dev', gateway_token: 'gateway-token', hosting_provider: 'fly',
-      fly_app_name: 'remclaw-00000000', fly_machine_id: 'machine-id', fly_volume_id: 'volume-id',
+      gateway_url: 'https://remclaw-f8679a968c6a.fly.dev', gateway_token: 'gateway-token', hosting_provider: 'fly',
+      fly_app_name: 'remclaw-f8679a968c6a', fly_machine_id: 'machine-id', fly_volume_id: 'volume-id',
       managed_talk_credential_fingerprint: oldFingerprint,
       managed_talk_desired_credential_fingerprint: newerFingerprint,
       managed_talk_credential_generation: 2,

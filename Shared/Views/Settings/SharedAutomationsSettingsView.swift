@@ -30,7 +30,7 @@ struct SharedAutomationsSettingsView: View {
 
     var body: some View {
         platformContainer
-            .navigationTitle("Automations")
+            .navigationTitle("Daily Check-in")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -80,7 +80,7 @@ struct SharedAutomationsSettingsView: View {
         } header: {
             Text("Built in")
         } footer: {
-            Text("Daily Brief is Rem's default automation. Open it to choose when it runs, review what it uses, and see recent runs.")
+            Text("Daily Brief is your built-in check-in. Open it to set when it runs, see what it uses, and review recent runs.")
                 .font(DesignTokens.Typography.caption1)
         }
     }
@@ -104,9 +104,9 @@ struct SharedAutomationsSettingsView: View {
         if let serviceError = error as? CheckinsServiceError,
            case let .requestFailed(statusCode, _) = serviceError,
            statusCode == 404 {
-            return "Automations need a server update"
+            return "Daily Check-in needs a server update"
         }
-        return "Couldn't load automations"
+        return "Couldn't load your check-in"
     }
 
     private func errorMessage(_ error: Error) -> String {
@@ -289,7 +289,7 @@ private struct DailyBriefAutomationDetailView: View {
         } header: {
             Text("Automation")
         } footer: {
-            Text("Daily Brief is active whenever at least one trigger below is on.")
+            Text("Daily Brief runs whenever at least one check-in time below is on.")
                 .font(DesignTokens.Typography.caption1)
         }
 
@@ -298,7 +298,7 @@ private struct DailyBriefAutomationDetailView: View {
         } header: {
             Text("Triggers")
         } footer: {
-            Text("At each enabled time, Rem builds a fresh brief and attempts to add it to Today and notify your devices.")
+            Text("At each time you turn on, Rem prepares your brief, adds it to Today, and notifies your devices.")
                 .font(DesignTokens.Typography.caption1)
         }
 
@@ -330,7 +330,7 @@ private struct DailyBriefAutomationDetailView: View {
         } header: {
             Text("Inputs")
         } footer: {
-            Text("The server reports what this automation can actually read right now. A connected source whose last collection failed is shown as Unavailable, not Included.")
+            Text("What Rem can read right now. A connected app whose last check failed shows as Unavailable, not Included.")
                 .font(DesignTokens.Typography.caption1)
         }
 
@@ -351,7 +351,7 @@ private struct DailyBriefAutomationDetailView: View {
         } header: {
             Text("Output")
         } footer: {
-            Text("The server reports what this automation actually produced. An output with nothing to show reads as Nothing yet, never as Included. Suggested tasks stay proposals: each names its source and waits for your acceptance before Rem creates lasting work.")
+            Text("What Rem produced. Anything with nothing to show reads as Nothing yet. Suggested tasks are proposals — each shows where it came from and waits for you to accept before Rem creates it.")
                 .font(DesignTokens.Typography.caption1)
         }
     }
@@ -423,7 +423,7 @@ private struct DailyBriefAutomationDetailView: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             Text("No inputs reported")
                 .font(DesignTokens.Typography.body.weight(.semibold))
-            Text("This server didn't list any sources for Daily Brief.")
+            Text("Rem didn't find any sources for your check-in.")
                 .font(DesignTokens.Typography.caption1)
                 .foregroundColor(DesignTokens.Color.labelSecondary)
         }
@@ -518,7 +518,7 @@ private struct DailyBriefAutomationDetailView: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             Text("No outputs reported")
                 .font(DesignTokens.Typography.body.weight(.semibold))
-            Text("This server didn't list anything Daily Brief produces.")
+            Text("Rem didn't list anything your check-in produces.")
                 .font(DesignTokens.Typography.caption1)
                 .foregroundColor(DesignTokens.Color.labelSecondary)
         }
@@ -535,7 +535,7 @@ private struct DailyBriefAutomationDetailView: View {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     Text("No runs yet")
                         .font(DesignTokens.Typography.body.weight(.semibold))
-                    Text("The latest scheduled processing time for each trigger will appear here.")
+                    Text("The most recent time each check-in ran will appear here.")
                         .font(DesignTokens.Typography.caption1)
                         .foregroundColor(DesignTokens.Color.labelSecondary)
                 }
@@ -557,7 +557,7 @@ private struct DailyBriefAutomationDetailView: View {
         } header: {
             Text("Last scheduled run")
         } footer: {
-            Text("The server currently retains only the latest time each trigger was processed. This does not guarantee that chat authoring or notification delivery succeeded.")
+            Text("Shows the most recent time each check-in ran. It doesn't confirm the brief was written or the notification arrived.")
                 .font(DesignTokens.Typography.caption1)
         }
     }
@@ -816,7 +816,7 @@ struct SharedAutomationsFixtureView: View {
             AutomationInputRow(
                 capability: .cloudBrowser,
                 state: .comingSoon,
-                detail: "Cloud-browser findings aren't collected for Daily Brief yet."),
+                detail: "Not part of your check-in yet."),
             AutomationInputRow(
                 capability: .unrecognized("smart_home"),
                 state: .unrecognized("degraded"),

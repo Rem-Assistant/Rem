@@ -41,19 +41,19 @@ name: Build Apple
 # Do not "simplify" push back to ['**'] — it doubles the bill and tells you nothing the
 # pull_request run has not already told you.
 #
-# Paths are literal, not globbed at the root: `**/*.xcodeproj/**` may not match `RemClaw.xcodeproj/…`
+# Paths are literal, not globbed at the root: `**/*.xcodeproj/**` may not match `Rem.xcodeproj/…`
 # if `**` requires at least one segment. Name the project directly rather than guess.
 on:
   push:
     branches: [staging, main]
     paths:
-      - 'RemClaw/**'
-      - 'RemClawTests/**'
-      - 'RemClawMacTests/**'
-      - 'RemClawMac/**'
-      - 'RemClawWidget/**'
+      - 'Rem/**'
+      - 'RemTests/**'
+      - 'RemMacTests/**'
+      - 'RemMac/**'
+      - 'RemWidget/**'
       - 'Shared/**'
-      - 'RemClaw.xcodeproj/**'
+      - 'Rem.xcodeproj/**'
       - 'openclaw'
       - '.gitmodules'
       - '**/*.entitlements'
@@ -66,13 +66,13 @@ on:
     # where the stack is built, so they are exactly where a broken build must not accumulate.
     branches: ['**']
     paths:
-      - 'RemClaw/**'
-      - 'RemClawTests/**'
-      - 'RemClawMacTests/**'
-      - 'RemClawMac/**'
-      - 'RemClawWidget/**'
+      - 'Rem/**'
+      - 'RemTests/**'
+      - 'RemMacTests/**'
+      - 'RemMac/**'
+      - 'RemWidget/**'
       - 'Shared/**'
-      - 'RemClaw.xcodeproj/**'
+      - 'Rem.xcodeproj/**'
       - 'openclaw'
       - '.gitmodules'
       - '**/*.entitlements'
@@ -95,9 +95,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - scheme: RemClaw
+          - scheme: Rem
             destination: 'generic/platform=iOS Simulator'
-          - scheme: RemClawMac
+          - scheme: RemMac
             destination: 'generic/platform=macOS'
     steps:
       - uses: actions/checkout@v4
@@ -125,8 +125,8 @@ jobs:
       # status, which has silently masked BUILD FAILED in this repo before. Not piped here, and
       # kept explicit so it stays true if someone adds `| xcpretty` later.
       # `build-for-testing`, NOT `build`. Each scheme's BuildAction contains only the .app; the
-      # .xctest bundle is in the TestAction, so plain `build` never compiles RemClawTests/** or
-      # RemClawMacTests/** — a test file that does not compile would merge green, including tests
+      # .xctest bundle is in the TestAction, so plain `build` never compiles RemTests/** or
+      # RemMacTests/** — a test file that does not compile would merge green, including tests
       # added specifically to close a gap. `build-for-testing` compiles both and still RUNS
       # nothing, so no simulator is booted.
       #
@@ -145,7 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project RemClaw.xcodeproj \
+            -project Rem.xcodeproj \
             -scheme "${{ matrix.scheme }}" \
             -destination "${{ matrix.destination }}" \
             -skipMacroValidation \

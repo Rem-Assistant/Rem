@@ -594,7 +594,7 @@ describe('GET /api/v1/brief', () => {
     }
   });
 
-  it('withholds pending authored prose because only verified delivery is canonical', async () => {
+  it('serves pending authored prose on the card but withholds conversation continuity until delivery', async () => {
     process.env.BRIEF_AI_AUTHORING_ENABLED = '1';
     try {
       poolMock.query.mockReset();
@@ -605,15 +605,25 @@ describe('GET /api/v1/brief', () => {
         [],
         [{ timezone: 'UTC' }],
       );
-      // The canonical read joins only state=delivered, so a pending row is absent.
-      poolMock.query.mockResolvedValueOnce({ rows: [] });
+      poolMock.query.mockResolvedValueOnce({ rows: [{
+        markdown: '# Shared-runtime brief\nThis prose is already useful on the card.',
+        summary: 'This prose is already useful on the card.',
+        headline: 'Shared-runtime brief',
+        delivered: false,
+        source: 'gateway',
+        revision: 'revision-pending',
+        authored_slot: 'afternoon',
+      }] });
 
       const res = await request(testApp())
         .get('/api/v1/brief')
         .set('X-Rem-Conversation-Continuity', 'durable-orchestrator-v1');
 
       expect(res.status).toBe(200);
-      expect(res.body.markdown).toContain('## Needs a decision');
+      expect(res.body.markdown).toBe('# Shared-runtime brief\nThis prose is already useful on the card.');
+      expect(res.body.summary).toBe('This prose is already useful on the card.');
+      expect(res.body.headline).toBe('Shared-runtime brief');
+      expect(res.body.is_authored).toBe(true);
       expect(res.body.brief_session_key).toBeUndefined();
     } finally {
       delete process.env.BRIEF_AI_AUTHORING_ENABLED;

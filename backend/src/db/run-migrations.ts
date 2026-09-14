@@ -22,9 +22,9 @@ if (!DATABASE_URL) {
  * recorded; subsequent boots skip already-applied files.
  *
  * Files are applied in sorted filename order. Two files sharing a numeric prefix
- * (e.g. `110_add_managed_talk_credential_fingerprint` + `110_make_apns_destination_single_owner`)
- * are distinct rows here and both apply — but new migrations should use a unique,
- * increasing prefix to keep ordering unambiguous.
+ * (e.g. `010_iap_identity_and_chains` + `010_quota_cycle_started_at`) are distinct
+ * rows here and both apply — but new migrations should use a unique, increasing
+ * prefix to keep ordering unambiguous.
  *
  * NOTE: each file is wrapped in a transaction (BEGIN/COMMIT), so a migration may
  * NOT use `CREATE INDEX CONCURRENTLY` (it cannot run inside a transaction block).

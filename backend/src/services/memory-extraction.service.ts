@@ -4,25 +4,20 @@
  * The user-managed memory store (user-memory.service.ts) lets the user type facts Rem should
  * remember. This service is the EXTRACTION layer: on a schedule (Railway cron — see
  * src/scripts/extract-memories.ts) it reads a user's recent activity (tasks + comments) and
- * asks THE USER'S OWN GATEWAY AGENT to distill 2-3 *durable* facts worth remembering
+ * asks Rem's shared tool-free runtime to distill 2-3 *durable* facts worth remembering
  * (preferences, ongoing goals, recurring context). Each fact is then written via
  * user-memory.service.addMemory(userId, fact, 'auto').
  *
- * Mirrors digest.service.ts: a deterministic gather step → a built prompt → one gateway turn.
- * There is no model-free fallback — if there is nothing to summarize, or the gateway cannot
+ * Mirrors digest.service.ts: a deterministic gather step → a built prompt → one Rem runtime turn.
+ * There is no model-free fallback — if there is nothing to summarize, or the runtime cannot
  * take the turn, we simply extract nothing (we never invent facts).
  *
- * ── THE GMI FALLBACK IS GONE (and this is why) ───────────────────────────────────────────
- * A failed gateway turn used to fall through to `gmiChat` on the org `GMI_API_KEY`. That made
- * a user who runs on their OWN key (a Mac local gateway, a self-hosted or Railway-deployed
- * one — see `run-block.ts`) spend Rem's key instead, silently, whenever their gateway hiccuped
- * — writing facts into their durable memory that Rem paid a different provider to infer. BYOK
- * is a global per-user mode, so no per-feature path may pick the key. `task-agent.service.ts`
- * dropped the identical fallback in #1327; this finishes the same job.
+ * The model call is admitted through Rem's durable run and usage ledgers. This service neither
+ * discovers a user's gateway nor calls a provider directly. Each invocation owns a fresh dispatch
+ * identity, so a terminal provider failure cannot poison the next scheduled pass.
  *
- * A skipped pass costs nothing durable: extraction is idempotent-by-design (the dedupe pass
- * drops anything close to an existing fact), so the next nightly tick re-reads the same
- * 14-day activity window and writes what this one did not.
+ * A skipped pass costs nothing durable: the next enabled nightly tick re-reads the same 14-day
+ * activity window, and the dedupe pass drops facts already stored or repeated in one completion.
  *
  * Dedupe is the safety valve: the same durable fact surfaces across many days of activity, so
  * before writing we drop any candidate that is a near-duplicate of an existing fact (or of an
@@ -31,12 +26,13 @@
  * See docs/agentbox/DIGESTS.md for the sibling proactive-cloud pattern.
  */
 
+import { randomUUID } from 'node:crypto';
 import { pool } from '../db/pool.js';
 // NOTE: no `gmi.service` import, deliberately. `tsconfig.json` does not set `noUnusedLocals`, so
 // an orphaned import here would compile silently and read to the next person as "the org-key
 // fallback is still reachable from this file". It is not, and the import is gone so that the
 // module graph says so too.
-import { runAgentTurnOnGateway, utcDateStamp } from './gateway-agent.service.js';
+import { runAgentTurnOnSharedRuntime } from '../runtime/agent-runtime.service.js';
 import { MEMORY_FACT_MAX_LENGTH } from './user-memory.service.js';
 import { classifyVolatileFact } from './volatile-runtime-facts.service.js';
 
@@ -101,7 +97,7 @@ export async function gatherActivityContext(
        FROM tasks
       WHERE user_id = $1::uuid
         AND updated_at >= $2::timestamptz
-      ORDER BY updated_at DESC
+      ORDER BY updated_at DESC, id ASC
       LIMIT 60`,
     [userId, sinceIso],
   );
@@ -113,7 +109,7 @@ export async function gatherActivityContext(
       WHERE user_id = $1::uuid
         AND status = 'completed'
         AND updated_at >= $2::timestamptz
-      ORDER BY updated_at DESC
+      ORDER BY updated_at DESC, id ASC
       LIMIT 40`,
     [userId, sinceIso],
   );
@@ -126,7 +122,7 @@ export async function gatherActivityContext(
       WHERE c.user_id = $1::uuid
         AND c.author_kind = 'user'
         AND c.created_at >= $2::timestamptz
-      ORDER BY c.created_at DESC
+      ORDER BY c.created_at DESC, c.id ASC
       LIMIT 40`,
     [userId, sinceIso],
   );
@@ -240,7 +236,7 @@ export function selectNovelFacts(
 }
 
 // ---------------------------------------------------------------------------
-// Extract (the user's own gateway)
+// Extract (Rem-owned tool-free runtime)
 // ---------------------------------------------------------------------------
 
 const EXTRACTION_SYSTEM =
@@ -331,16 +327,16 @@ export interface ExtractOptions {
 }
 
 /**
- * Extract the NOVEL durable facts for one user: gather recent activity, ask THE USER'S OWN
- * GATEWAY for candidate facts, then dedupe against `existingFacts`. Returns the facts that should
+ * Extract the NOVEL durable facts for one user: gather recent activity, ask Rem's shared runtime
+ * for candidate facts, then dedupe against `existingFacts`. Returns the facts that should
  * be written (already trimmed + deduped) — or `[]` when there is nothing to summarize, the
- * gateway could not take the turn, or everything it surfaced is already known.
+ * runtime could not take the turn, or everything it surfaced is already known.
  *
  * DOES NOT THROW on a runtime failure. It used to: the org-key GMI path threw on transport/HTTP
  * errors and on an empty completion, and `extract-memories.ts` classified the two apart so a
- * model no-op could not fail the whole cron run (#906). Both are gone — `runAgentTurnOnGateway`
- * never throws, and an empty turn is simply no facts — so that classification is structural now
- * and the script's catch handles only genuine errors (DB, malformed data).
+ * model no-op could not fail the whole cron run (#906). Runtime failures now resolve to `[]`, and
+ * an empty turn is simply no facts, so that classification is structural; the script's catch
+ * handles only genuine errors (DB, malformed data).
  */
 export async function extractNovelFactsForUser(
   userId: string,
@@ -357,18 +353,24 @@ export async function extractNovelFactsForUser(
 
   const userPrompt = buildExtractionPrompt(ctx, existingFacts);
 
-  // ONE RUNTIME: the user's gateway (chat.send). Extraction runs on the gateway's own model,
-  // so GMI's empty-completion intolerance (#906) is moot for this path — an empty gateway
-  // reply just means "no durable facts", which parses to []. A gateway-less user, or a
-  // wake/turn failure, extracts NOTHING. See the fallback note in this file's header.
-  const viaGateway = await runAgentTurnOnGateway({
-    userId,
-    // Date-scoped so each pass is its own session (no unbounded history growth).
-    sessionKey: `rem-memory-${utcDateStamp(now)}`,
-    message: `${EXTRACTION_SYSTEM}\n\n${userPrompt}`,
-  });
-  if (!viaGateway.ok) return [];
-  const content: string = viaGateway.text;
+  const message = `${EXTRACTION_SYSTEM}\n\n${userPrompt}`;
+  // This pass only classifies backend-owned data. The empty capability grant is enforced by the
+  // Rem runtime itself, while its durable run ledger supplies tenant fencing and attribution.
+  let turn;
+  try {
+    turn = await runAgentTurnOnSharedRuntime({
+      principal: { userId, authority: 'internal_service' },
+      sessionKey: `rem-memory-${now.toISOString().slice(0, 10).replace(/-/g, '')}`,
+      idempotencyKey: `rem-memory:${randomUUID()}`,
+      message,
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+    });
+  } catch (error: unknown) {
+    console.error('[MEMORY] shared runtime failed:', error instanceof Error ? error.message : String(error));
+    return [];
+  }
+  if (!turn.ok) return [];
+  const content: string = turn.text;
 
   const candidates = parseFactsFromCompletion(content, maxFacts);
   return selectNovelFacts(candidates, existingFacts, threshold).slice(0, maxFacts);

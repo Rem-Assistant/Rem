@@ -3,9 +3,9 @@ import SwiftUI
 import PhotosUI
 import ImageIO
 import UniformTypeIdentifiers
-import OpenClawChatUI
-import OpenClawKit
-import OpenClawProtocol
+import RemChatUI
+import RemKit
+import RemProtocol
 
 #if canImport(UIKit)
 import UIKit
@@ -60,7 +60,7 @@ enum ChatComposerSendPolicy {
     }
 }
 
-/// `OpenClawChatMessage` adapter over `ChatTimeSeparatorPolicy`.
+/// `RemChatMessage` adapter over `ChatTimeSeparatorPolicy`.
 ///
 /// OpenClaw already persists a timestamp on each chat message, so the grouping is presentation
 /// derived from canonical history rather than stored in a second client-side timeline. The rules
@@ -71,7 +71,7 @@ enum ChatComposerSendPolicy {
 /// task chat resumed the next morning as it is between two briefs.
 enum ChatMessageSeparatorPolicy {
     static func isToday(
-        _ message: OpenClawChatMessage,
+        _ message: RemChatMessage,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> Bool {
@@ -82,8 +82,8 @@ enum ChatMessageSeparatorPolicy {
     }
 
     static func label(
-        for message: OpenClawChatMessage,
-        previous: OpenClawChatMessage?,
+        for message: RemChatMessage,
+        previous: RemChatMessage?,
         now: Date = Date(),
         calendar: Calendar = .current,
         locale: Locale = .current
@@ -206,15 +206,15 @@ enum StreamingAssistantHandoffPolicy {
 
 /// Cross-platform Rem custom chat view used by iOS and macOS.
 ///
-/// Replaces the default `OpenClawChatView` from `OpenClawChatUI` with Rem's
+/// Replaces the default `RemGatewayChatView` from `RemChatUI` with Rem's
 /// custom surface: speech bubbles, thinking blocks, inline tool result cards,
 /// Grok-style composer. Voice and quota hooks are optional so Mac (which
 /// currently has neither) can drop them in as `nil`.
 ///
 /// Source of truth: this view. The iOS `RemChatView` wrapper and Mac
 /// `MacChatWindow` both delegate to this type. See
-/// `RemClaw/Sources/Chat/RemChatView.swift` for iOS-specific glue (voice,
-/// quota) and `RemClawMac/Sources/UI/MacChatWindow.swift` for Mac gating.
+/// `Rem/Sources/Chat/RemChatView.swift` for iOS-specific glue (voice,
+/// quota) and `RemMac/Sources/UI/MacChatWindow.swift` for Mac gating.
 struct SharedRemChatView: View {
     struct FirstChatPrompt: Identifiable, Equatable {
         let id: String
@@ -223,6 +223,11 @@ struct SharedRemChatView: View {
         /// Nil for the generic fallback set. Shown so a personalized starter can't be mistaken for
         /// something Rem invented (doc 38 §6 — same principle as the Agenda's SuggestedTaskRow).
         var subtitle: String? = nil
+        /// The connected source(s) this starter was ingested from, for the trailing
+        /// "From {source icon(s)}" on its second line (#1369). Empty for the generic fallback set
+        /// (nothing to attribute) and for local calendar/overdue suggestions
+        /// (`SuggestionSourcePresentation` drops those — the subtitle already names them).
+        var sources: [String] = []
     }
 
     /// Generic fallback starters, shown when there are no personalized suggestions to draw from
@@ -246,10 +251,10 @@ struct SharedRemChatView: View {
         suggestions
             .filter { $0.action.kind == "createTask" }
             .prefix(3)
-            .map { FirstChatPrompt(id: $0.key, text: $0.title, subtitle: $0.subtitle) }
+            .map { FirstChatPrompt(id: $0.key, text: $0.title, subtitle: $0.subtitle, sources: [$0.source]) }
     }
 
-    @Bindable var viewModel: OpenClawChatViewModel
+    @Bindable var viewModel: RemChatViewModel
 
     /// Starter prompts shown on an empty conversation. The platform wrapper injects personalized
     /// starters (via `SharedRemChatView.starters(from:)`); when it passes the generic fallback (or
@@ -300,6 +305,9 @@ struct SharedRemChatView: View {
     /// sub-second history load on a healthy gateway), so gating the card on it made "Waiting for your
     /// gateway" fire falsely on every chat open. The platform root passes `gateway.connectionState`.
     var gatewayConnectionState: GatewayConnectionState = .connected
+    /// True when this transcript and send path are owned by Rem's runtime rather than a gateway.
+    /// Such conversations must not inherit gateway recovery UI or composer disabling.
+    var runtimeOwnsConversation: Bool = false
     /// Backend JWT subject of the signed-in account, passed by the platform root
     /// (`gateway.authenticatedAccountIDForRecovery`). Used ONLY to scope the brief headline that
     /// titles the durable orchestrator session: the headline is model-authored prose that can name
@@ -370,7 +378,7 @@ struct SharedRemChatView: View {
     var onOpenDeviceConnections: (() -> Void)?
     var onRetryConnection: (() -> Void)?
     /// Exact gateway execution lifecycle, captured by the platform transport
-    /// before OpenClawChatUI rewrites execution IDs for history routing.
+    /// before RemChatUI rewrites execution IDs for history routing.
     var runLifecycleEvidenceStore: RunLifecycleEvidenceStore?
 
     /// Session name refresh nudge. Some platforms want to force a redraw
@@ -402,7 +410,7 @@ struct SharedRemChatView: View {
     /// selection is loaded into the view model's pending attachments. The picker
     /// is the only *new* affordance here — the attachments strip, removable
     /// chips, base64 encoding, and `chat.send` plumbing already exist upstream
-    /// (`OpenClawChatViewModel.addImageAttachment` → `OpenClawChatAttachmentPayload`).
+    /// (`RemChatViewModel.addImageAttachment` → `RemChatAttachmentPayload`).
     @State private var pickedPhotoItems: [PhotosPickerItem] = []
     /// "+" composer sheet (ChatGPT/Claude "Add to Chat" pattern). Holds the
     /// decluttered affordances — attach rows (Camera/Photos/Files), Thinking
@@ -466,6 +474,14 @@ struct SharedRemChatView: View {
     /// healthy run finishing and its history refresh landing can't flash the card.
     @State private var interruptedAffordanceVisible = false
 
+    /// Live-measured height of `bottomControls` (browser card + banners + composer + voice bar),
+    /// captured via a `GeometryReader` background so the transcript can reserve exactly the space the
+    /// controls occupy. The composer grows with multi-line input, model-picker chrome, and the voice
+    /// bar; a fixed estimate under-reserved and tucked the final message behind the grown composer.
+    /// Zero until the first layout pass, at which point `bottomTranscriptInset` falls back to the
+    /// prior fixed estimate.
+    @State private var measuredBottomControlsHeight: CGFloat = 0
+
     /// Rename alert triggered from the nav bar menu.
     @State private var isRenamingSession = false
     @State private var renameText: String = ""
@@ -521,7 +537,20 @@ struct SharedRemChatView: View {
         ZStack(alignment: .bottom) {
             messageList
             bottomControls
+                // Measure the bottom controls' real height so the transcript reserves a bottom inset
+                // equal to the *current* composer height (it grows with multi-line input and the
+                // voice bar). Mirrors the `GeometryReader` + `PreferenceKey` idiom already used for
+                // the composer field itself in `RemComposerBar`.
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: BottomControlsHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                )
         }
+        .onPreferenceChange(BottomControlsHeightKey.self) { measuredBottomControlsHeight = $0 }
         .navigationTitle(sessionDisplayName)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -795,7 +824,7 @@ struct SharedRemChatView: View {
     /// The transcript id the ended browser card anchors to: the LAST browser/canvas call. The card
     /// renders right after it, so it sits at the browser's chronological place in the history and
     /// later messages scroll below it — instead of the card chasing the bottom of the transcript.
-    private var browserAnchorMessageID: OpenClawChatMessage.ID? {
+    private var browserAnchorMessageID: RemChatMessage.ID? {
         let resolvedStructuredAnchor = browserSession?
             .browserTranscriptAnchorState(for: viewModel.sessionKey)?.resolvedMessageID
         return Self.browserAnchorMessageID(
@@ -811,10 +840,10 @@ struct SharedRemChatView: View {
     /// card visible after completion and lets it remain the canonical presentation instead of
     /// leaving a generic browser step inside Activity.
     static func browserAnchorMessageID(
-        messages: [OpenClawChatMessage],
+        messages: [RemChatMessage],
         activeRunEvidences: [BrowserRunEvidence],
-        structuredResolvedAnchor: OpenClawChatMessage.ID? = nil
-    ) -> OpenClawChatMessage.ID? {
+        structuredResolvedAnchor: RemChatMessage.ID? = nil
+    ) -> RemChatMessage.ID? {
         if activeRunEvidences.contains(where: \.containsBrowserActivity) {
             guard let structuredResolvedAnchor,
                   messages.contains(where: { $0.id == structuredResolvedAnchor }) else { return nil }
@@ -824,14 +853,14 @@ struct SharedRemChatView: View {
     }
 
     static func resolveStructuredBrowserAnchor(
-        messages: [OpenClawChatMessage],
-        baselineMessageID: OpenClawChatMessage.ID?,
+        messages: [RemChatMessage],
+        baselineMessageID: RemChatMessage.ID?,
         baselineMessageIndex: Int?,
         baselineMessageSignature: String?,
-        existingResolvedMessageID: OpenClawChatMessage.ID?,
+        existingResolvedMessageID: RemChatMessage.ID?,
         evidenceIsLive: Bool,
         structuredToolCallIDs: Set<String> = []
-    ) -> OpenClawChatMessage.ID? {
+    ) -> RemChatMessage.ID? {
         let baselineIndexByID = baselineMessageID.flatMap { baseline in
             messages.lastIndex(where: { $0.id == baseline })
         }
@@ -888,7 +917,7 @@ struct SharedRemChatView: View {
             .map { messages[$0].id }
     }
 
-    static func browserTranscriptBoundarySignature(_ message: OpenClawChatMessage) -> String {
+    static func browserTranscriptBoundarySignature(_ message: RemChatMessage) -> String {
         let content = message.content.map { item in
             [item.type ?? "", item.name ?? "", item.text ?? ""]
                 .joined(separator: "\u{1F}")
@@ -897,7 +926,7 @@ struct SharedRemChatView: View {
     }
 
     static func messageMatchesStructuredToolCall(
-        _ message: OpenClawChatMessage,
+        _ message: RemChatMessage,
         toolCallIDs: Set<String>
     ) -> Bool {
         guard !toolCallIDs.isEmpty else { return false }
@@ -907,7 +936,7 @@ struct SharedRemChatView: View {
         }
     }
 
-    private var browserCardTurnMessageIDs: Set<OpenClawChatMessage.ID> {
+    private var browserCardTurnMessageIDs: Set<RemChatMessage.ID> {
         switch browserCardPresentation {
         case .live:
             // Agent evidence can make the card live before the matching browser tool call (or even
@@ -933,8 +962,8 @@ struct SharedRemChatView: View {
 
     static func messageIDsFromMatchedToolCall(
         toolCallIDs: Set<String>,
-        messages: [OpenClawChatMessage]
-    ) -> Set<OpenClawChatMessage.ID> {
+        messages: [RemChatMessage]
+    ) -> Set<RemChatMessage.ID> {
         guard !toolCallIDs.isEmpty,
               let anchorIndex = messages.firstIndex(where: { message in
                   if let id = message.toolCallId, toolCallIDs.contains(id) { return true }
@@ -953,9 +982,9 @@ struct SharedRemChatView: View {
     }
 
     static func messageIDsInAssistantTurn(
-        containing anchorID: OpenClawChatMessage.ID?,
-        messages: [OpenClawChatMessage]
-    ) -> Set<OpenClawChatMessage.ID> {
+        containing anchorID: RemChatMessage.ID?,
+        messages: [RemChatMessage]
+    ) -> Set<RemChatMessage.ID> {
         guard let anchorID,
               let anchorIndex = messages.firstIndex(where: { $0.id == anchorID }) else { return [] }
 
@@ -1093,7 +1122,7 @@ struct SharedRemChatView: View {
             .suffix(12))
     }
 
-    private func completedSessionPreviewEntries(from message: OpenClawChatMessage) -> [SessionPreviewEntry] {
+    private func completedSessionPreviewEntries(from message: RemChatMessage) -> [SessionPreviewEntry] {
         let role = message.role.lowercased()
         let timestamp = message.timestamp.flatMap { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
 
@@ -1141,7 +1170,7 @@ struct SharedRemChatView: View {
         )
     }
 
-    private func toolResultStatus(from message: OpenClawChatMessage) -> String? {
+    private func toolResultStatus(from message: RemChatMessage) -> String? {
         for item in message.content {
             if let status = toolResultStatus(from: item) {
                 return status
@@ -1150,7 +1179,7 @@ struct SharedRemChatView: View {
         return nil
     }
 
-    private func toolResultStatus(from item: OpenClawChatMessageContent) -> String? {
+    private func toolResultStatus(from item: RemChatMessageContent) -> String? {
         if let status = statusValue(in: item.content) {
             return status
         }
@@ -1220,8 +1249,8 @@ struct SharedRemChatView: View {
     /// read-only), so the divergent placeholder defeats the merge and the image
     /// renders twice. We keep the later (server) copy. No-op for normal text
     /// sends, which the submodule already de-duplicates.
-    private var visibleMessages: [OpenClawChatMessage] {
-        var result: [OpenClawChatMessage] = []
+    private var visibleMessages: [RemChatMessage] {
+        var result: [RemChatMessage] = []
         result.reserveCapacity(viewModel.messages.count)
         for message in viewModel.messages {
             if message.role == "user",
@@ -1246,8 +1275,8 @@ struct SharedRemChatView: View {
     /// True when two user messages share the same NON-empty set of inline image
     /// payloads — i.e. one is the optimistic copy of the other's attachment send.
     private static func userMessagesShareAttachmentPayload(
-        _ lhs: OpenClawChatMessage,
-        _ rhs: OpenClawChatMessage
+        _ lhs: RemChatMessage,
+        _ rhs: RemChatMessage
     ) -> Bool {
         let lhsKeys = attachmentContentKeys(lhs)
         guard !lhsKeys.isEmpty else { return false }
@@ -1255,15 +1284,15 @@ struct SharedRemChatView: View {
     }
 
     private static func userMessagesShareHiddenBriefEcho(
-        _ lhs: OpenClawChatMessage,
-        _ rhs: OpenClawChatMessage
+        _ lhs: RemChatMessage,
+        _ rhs: RemChatMessage
     ) -> Bool {
         let lhsText = lhs.content.compactMap(\.text).joined(separator: "\n")
         let rhsText = rhs.content.compactMap(\.text).joined(separator: "\n")
         return StreamingAssistantHandoffPolicy.isHiddenBriefEchoPair(lhsText, rhsText)
     }
 
-    private static func attachmentContentKeys(_ message: OpenClawChatMessage) -> Set<String> {
+    private static func attachmentContentKeys(_ message: RemChatMessage) -> Set<String> {
         var keys = Set<String>()
         for item in message.content {
             guard let base64 = attachmentBase64(item), !base64.isEmpty else { continue }
@@ -1285,7 +1314,9 @@ struct SharedRemChatView: View {
     /// The transcript shows the waking skeleton + a status card over a disabled composer while this
     /// is true — i.e. whenever the gateway is NOT connected (connecting/pairing/unauthorized/
     /// unreachable/offline), never for a normal message load on a healthy (connected) gateway.
-    private var isWaking: Bool { !gatewayConnectionState.isConnected || Self.forceWakingPreview }
+    private var isWaking: Bool {
+        (!runtimeOwnsConversation && !gatewayConnectionState.isConnected) || Self.forceWakingPreview
+    }
 
     /// A pending inbound prompt = the composer already carries unsent text: a skill/capability
     /// prefill (`openSkillSetupChat`), a task-continuation seed, or the user's own draft. Intent is
@@ -1314,7 +1345,7 @@ struct SharedRemChatView: View {
         requestedSessionKey == nil || requestedSessionKey == viewModel.sessionKey
     }
 
-    /// `OpenClawChatViewModel.load()` runs in a Task. A warm/cached request can toggle `isLoading`
+    /// `RemChatViewModel.load()` runs in a Task. A warm/cached request can toggle `isLoading`
     /// entirely between SwiftUI observation passes, so waiting only for an observed true→false edge
     /// can strand the shimmer forever. Give the outer route task one short window to begin; if the
     /// requested session is still active and idle afterward, its history is settled (including a
@@ -1355,7 +1386,8 @@ struct SharedRemChatView: View {
                         activitySessionKey: runActivityAccumulator.sessionKey,
                         currentSessionKey: viewModel.sessionKey,
                         hasActivityDisplays: !runActivityAccumulator.displays.isEmpty
-                    )
+                    ),
+                    completedInitialHistoryLoad: completedInitialHistoryLoad
                 ) {
                 case .skeleton:
                     ChatWakingSkeleton()
@@ -1533,6 +1565,13 @@ struct SharedRemChatView: View {
                     initialHistoryCompletionFallbackTask?.cancel()
                     completedInitialHistoryLoad = true
                     initialHistoryLoadWasRequired = false
+                } else if !isLoading, isFreshConversation, !completedInitialHistoryLoad {
+                    // A fresh conversation's first bootstrap has settled — this is the transition
+                    // out of the stale-message window that the fresh-flash guard covers (#1371).
+                    // Mark it loaded so a later in-conversation refresh (isLoading true again while
+                    // the user's own messages are on screen) cannot re-arm the guard and blank the
+                    // conversation back to the starters.
+                    completedInitialHistoryLoad = true
                 } else if !isLoading {
                     scheduleInitialHistoryCompletionFallback()
                 }
@@ -1651,11 +1690,12 @@ struct SharedRemChatView: View {
     }
 
     private var bottomTranscriptInset: CGFloat {
-        var inset: CGFloat = isVoiceModeActive ? 168 : 116
-        // The pinned "Rem is using a browser" card sits above the composer and eats into the
-        // transcript's visible bottom — add its height so the last messages aren't tucked under it.
-        if browserLiveHere { inset += 72 }
-        return inset
+        ChatTranscriptInsetResolver.resolve(
+            measuredBottomControlsHeight: measuredBottomControlsHeight,
+            isVoiceModeActive: isVoiceModeActive,
+            browserLiveHere: browserLiveHere,
+            gap: DesignTokens.Spacing.md
+        )
     }
 
     private var shouldRenderStreamingBeforeVoicePlaceholder: Bool {
@@ -1686,7 +1726,7 @@ struct SharedRemChatView: View {
     /// optimistic user row with a canonical timestamp (and therefore a new UUID), but this content
     /// fingerprint remains stable across that reconciliation. The handoff policy anchors it as the
     /// latest user turn rather than assigning a prefix-sensitive occurrence ordinal.
-    private static func userRefreshFingerprint(_ message: OpenClawChatMessage) -> String? {
+    private static func userRefreshFingerprint(_ message: RemChatMessage) -> String? {
         let role = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard role == "user" else { return nil }
         let content = message.content.map { item in
@@ -1884,12 +1924,12 @@ struct SharedRemChatView: View {
     }
 
     static func latestExactBriefMessageID(
-        in messages: [OpenClawChatMessage],
+        in messages: [RemChatMessage],
         matching expectedMarkdown: String,
         now: Date = Date(),
         calendar: Calendar = .current,
         requiresCurrentDay: Bool = true
-    ) -> OpenClawChatMessage.ID? {
+    ) -> RemChatMessage.ID? {
         let expected = MessageCleaner.cleanAssistantMessageText(expectedMarkdown)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !expected.isEmpty else { return nil }
@@ -1928,12 +1968,12 @@ struct SharedRemChatView: View {
 
     static func briefSuggestionAnchorMessageID(
         sessionKey: String,
-        messages: [OpenClawChatMessage],
+        messages: [RemChatMessage],
         briefMarkdown: String?,
         suggestionCount: Int,
         now: Date = Date(),
         calendar: Calendar = .current
-    ) -> OpenClawChatMessage.ID? {
+    ) -> RemChatMessage.ID? {
         guard BriefContext.isDurableOrchestratorSession(sessionKey),
               suggestionCount > 0,
               let briefMarkdown,
@@ -2034,7 +2074,7 @@ struct SharedRemChatView: View {
         }
     }
 
-    private static func assistantTextForBriefAnchor(_ message: OpenClawChatMessage) -> String {
+    private static func assistantTextForBriefAnchor(_ message: RemChatMessage) -> String {
         let raw = message.content.compactMap { item -> String? in
             let type = (item.type ?? "text").lowercased()
             guard type == "text" else { return nil }
@@ -2046,7 +2086,7 @@ struct SharedRemChatView: View {
 
     private func scrollToBottom(
         proxy: ScrollViewProxy,
-        fallbackMessageId: OpenClawChatMessage.ID?,
+        fallbackMessageId: RemChatMessage.ID?,
         animated: Bool
     ) {
         let action = {
@@ -2082,7 +2122,7 @@ struct SharedRemChatView: View {
     }
 
     static func hasExactBriefToday(
-        _ messages: [OpenClawChatMessage],
+        _ messages: [RemChatMessage],
         matching expectedMarkdown: String,
         now: Date = Date(),
         calendar: Calendar = .current
@@ -2096,7 +2136,7 @@ struct SharedRemChatView: View {
     }
 
     static func briefPreviewInsertionIndex(
-        in messages: [OpenClawChatMessage],
+        in messages: [RemChatMessage],
         matching expectedMarkdown: String,
         now: Date = Date(),
         calendar: Calendar = .current
@@ -2119,7 +2159,7 @@ struct SharedRemChatView: View {
     /// previous message" and open a spurious group on the row after it. The fold carries the last
     /// timestamp it trusts, which is also the behaviour the policy tests pin.
     static func separatorLabels(
-        in messages: [OpenClawChatMessage],
+        in messages: [RemChatMessage],
         briefPreviewInsertionIndex: Int?,
         now: Date = Date(),
         calendar: Calendar = .current,
@@ -2221,13 +2261,16 @@ struct SharedRemChatView: View {
                                         .font(DesignTokens.Typography.body)
                                         .foregroundStyle(DesignTokens.Color.labelPrimary)
                                         .multilineTextAlignment(.leading)
-                                    // WHY/source line for personalized starters (nil on the generic set).
-                                    if let subtitle = prompt.subtitle, !subtitle.isEmpty {
-                                        Text(subtitle)
-                                            .font(DesignTokens.Typography.caption1)
-                                            .foregroundStyle(DesignTokens.Color.labelSecondary)
-                                            .multilineTextAlignment(.leading)
-                                    }
+                                    // WHY/source line for personalized starters (nil on the generic
+                                    // set). Cleaned, kept to ONE tight line — the founder's "too-long
+                                    // starter context is probably not needed" — with a trailing
+                                    // "From {source icon(s)}" (#1369). Same component as the Agenda
+                                    // cards and the overflow sheet so the three never drift.
+                                    SuggestionMetadataLine(
+                                        rawSubtitle: prompt.subtitle,
+                                        badges: SuggestionSourcePresentation.badges(forSources: prompt.sources),
+                                        contentLineLimit: 1
+                                    )
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -2293,9 +2336,9 @@ struct SharedRemChatView: View {
     /// (`interruptedRetryPrompt`) so a healthy in-flight turn never reaches here.
     ///
     /// Detection is HEURISTIC, keyed on content presence (see `assistantTurnCompleted`).
-    /// It is NOT a structured-signal classifier: `OpenClawChatMessage.stopReason` is
+    /// It is NOT a structured-signal classifier: `RemChatMessage.stopReason` is
     /// only populated when the gateway's `chat.history` JSON happens to carry it
-    /// per-message — the live chat-event path (`OpenClawChatEventPayload`) has no
+    /// per-message — the live chat-event path (`RemChatEventPayload`) has no
     /// stop reason and building it in would require editing the read-only `openclaw`
     /// submodule — so it is frequently nil and used only as a best-effort secondary.
     ///
@@ -2306,7 +2349,7 @@ struct SharedRemChatView: View {
     /// Complete shapes (return nil): empty transcript; a trailing tool-result
     /// message (the agent legitimately ended on an action); an assistant turn with
     /// any visible final content — text OR media — or a terminal stop reason.
-    static func interruptedTurnRetryPrompt(_ messages: [OpenClawChatMessage]) -> String? {
+    static func interruptedTurnRetryPrompt(_ messages: [RemChatMessage]) -> String? {
         guard let last = messages.last else { return nil }
 
         if isToolResultRole(last.role) { return nil }
@@ -2332,7 +2375,7 @@ struct SharedRemChatView: View {
     /// terminal non-aborted `stopReason` also marks it complete. The stop reason can
     /// only ADD completions here, never veto a content-bearing turn — so a frequently
     /// nil stop reason (see `interruptedTurnRetryPrompt`) can't cause a false positive.
-    static func assistantTurnCompleted(_ message: OpenClawChatMessage) -> Bool {
+    static func assistantTurnCompleted(_ message: RemChatMessage) -> Bool {
         if assistantHasFinalContent(message) { return true }
         if let stop = message.stopReason?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
            !stop.isEmpty,
@@ -2346,7 +2389,7 @@ struct SharedRemChatView: View {
     /// piece of FINAL content — real text OR produced media (image/file/attachment).
     /// A text-free image/attachment reply counts as an answer, so a healthy media-only
     /// turn is never mistaken for an interruption.
-    static func assistantHasFinalContent(_ message: OpenClawChatMessage) -> Bool {
+    static func assistantHasFinalContent(_ message: RemChatMessage) -> Bool {
         for item in message.content {
             switch (item.type ?? "text").lowercased() {
             case "thinking", "toolcall", "tool_call", "tooluse", "tool_use",
@@ -2369,7 +2412,7 @@ struct SharedRemChatView: View {
         return false
     }
 
-    static func terminalAssistantTimestamp(_ message: OpenClawChatMessage) -> Double? {
+    static func terminalAssistantTimestamp(_ message: RemChatMessage) -> Double? {
         let role = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard (role == "assistant" || role == "model"),
               assistantHasFinalContent(message),
@@ -2381,7 +2424,7 @@ struct SharedRemChatView: View {
     static func updatedCompletedRunElapsedSeconds(
         current: Int?,
         turnStartedAt: Double?,
-        message: OpenClawChatMessage,
+        message: RemChatMessage,
         carriesActivity: Bool
     ) -> Int? {
         var resolved = carriesActivity ? nil : current
@@ -2416,7 +2459,7 @@ struct SharedRemChatView: View {
     /// The cleaned text of the most recent `user` message — the prompt Retry
     /// re-sends. Cleaning mirrors the display path so hidden preambles
     /// (device-context, brief, cloud-browser directive) never leak into the resend.
-    static func lastUserPromptText(_ messages: [OpenClawChatMessage]) -> String? {
+    static func lastUserPromptText(_ messages: [RemChatMessage]) -> String? {
         for message in messages.reversed()
         where message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "user" {
             for item in message.content {
@@ -2638,7 +2681,7 @@ struct SharedRemChatView: View {
         runActivityAccumulator.reconcile(currentRunActivityReducerInput)
     }
 
-    nonisolated static func messageCarriesActivityEvidence(_ message: OpenClawChatMessage) -> Bool {
+    nonisolated static func messageCarriesActivityEvidence(_ message: RemChatMessage) -> Bool {
         let role = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if role == "toolresult" || role == "tool_result" || role == "tool" || role == "function" {
             return true
@@ -2656,7 +2699,7 @@ struct SharedRemChatView: View {
 
     @ViewBuilder
     private func messageRow(
-        _ message: OpenClawChatMessage,
+        _ message: RemChatMessage,
         turnActivity: HistoricalTurnActivity? = nil
     ) -> some View {
         let isUser = message.role == "user"
@@ -2805,7 +2848,7 @@ struct SharedRemChatView: View {
         return consolidated
     }
 
-    private func historicalActivityDisplays(for message: OpenClawChatMessage) -> [ActionLifecycleDisplay] {
+    private func historicalActivityDisplays(for message: RemChatMessage) -> [ActionLifecycleDisplay] {
         let isBrowserCardTurn = browserCardTurnMessageIDs.contains(message.id)
         if Self.isToolResultRole(message.role) {
             return message.content.compactMap { content -> ActionLifecycleDisplay? in
@@ -2904,11 +2947,11 @@ struct SharedRemChatView: View {
         )
     }
 
-    static func toolResultNeedsStandalonePresentation(_ message: OpenClawChatMessage) -> Bool {
+    static func toolResultNeedsStandalonePresentation(_ message: RemChatMessage) -> Bool {
         !standaloneToolResultContentIndexes(message).isEmpty
     }
 
-    static func standaloneToolResultContentIndexes(_ message: OpenClawChatMessage) -> Set<Int> {
+    static func standaloneToolResultContentIndexes(_ message: RemChatMessage) -> Set<Int> {
         Set(message.content.enumerated().compactMap { index, content in
             let text = toolResultText(content)
             guard !text.isEmpty else { return nil }
@@ -2991,7 +3034,7 @@ struct SharedRemChatView: View {
         }
     }
 
-    static func foldedUnknownToolResultIndexes(for message: OpenClawChatMessage) -> Set<Int> {
+    static func foldedUnknownToolResultIndexes(for message: RemChatMessage) -> Set<Int> {
         Set(message.content.enumerated().compactMap { index, content in
             let text = toolResultText(content)
             guard !ToolResultParser.parse(text).isKnown,
@@ -3020,7 +3063,7 @@ struct SharedRemChatView: View {
         return result
     }
 
-    private static func toolResultText(_ content: OpenClawChatMessageContent) -> String {
+    private static func toolResultText(_ content: RemChatMessageContent) -> String {
         if let text = content.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             return text
         }
@@ -3072,7 +3115,7 @@ struct SharedRemChatView: View {
         }?.id
     }
 
-    private func messageContainsRuntimePairingRecoveryDiagnostic(_ message: OpenClawChatMessage) -> Bool {
+    private func messageContainsRuntimePairingRecoveryDiagnostic(_ message: RemChatMessage) -> Bool {
         for item in message.content {
             if let thinking = item.thinking, !thinking.isEmpty {
                 let cleaned = Self.cleanThinkingTextForDisplay(thinking)
@@ -3209,11 +3252,11 @@ struct SharedRemChatView: View {
         var thinking: [String] = []
         var textBlocks: [String] = []
         var jsonToolResults: [String] = []
-        var toolCalls: [OpenClawChatMessageContent] = []
-        var attachments: [OpenClawChatMessageContent] = []
+        var toolCalls: [RemChatMessageContent] = []
+        var attachments: [RemChatMessageContent] = []
     }
 
-    static func splitContent(_ content: [OpenClawChatMessageContent], isUser: Bool) -> SplitContent {
+    static func splitContent(_ content: [RemChatMessageContent], isUser: Bool) -> SplitContent {
         var result = SplitContent()
         #if DEBUG
         // Phase 1 diagnostics (#260): trace every content item so we can
@@ -3330,6 +3373,27 @@ struct SharedRemChatView: View {
         MessageCleaner.cleanAssistantMessageText(text)
     }
 
+    // MARK: - Fun / Personality
+
+    /// Master switch for optional "fun / personality" chat flourishes (currently the decorative
+    /// tail dots that trail a user's sent bubble). OFF by default: the founder asked to stop
+    /// shipping these unconditionally while preserving the work behind a flag (#1371). Backed by a
+    /// UserDefaults key so it can be flipped for a demo without a settings surface, and overridable
+    /// via a launch argument for fixtures/tests.
+    nonisolated static let funPersonalityDefaultsKey = "rem.chat.funPersonality"
+
+    nonisolated static var funPersonalityEnabled: Bool {
+        if ProcessInfo.processInfo.arguments.contains("-remChatFunPersonality") { return true }
+        return UserDefaults.standard.bool(forKey: funPersonalityDefaultsKey)
+    }
+
+    /// Pure decision for whether to draw the user-bubble tail dots. Extracted so the default-off
+    /// contract is unit-testable without a SwiftUI body (#1371): only a user bubble AND the
+    /// fun/personality flag together show the tail.
+    nonisolated static func showsUserBubbleTail(isUser: Bool, funPersonalityEnabled: Bool) -> Bool {
+        isUser && funPersonalityEnabled
+    }
+
     // MARK: - Speech Bubble
 
     @ViewBuilder
@@ -3363,8 +3427,10 @@ struct SharedRemChatView: View {
                 .clipShape(RoundedRectangle(cornerRadius: isUser ? 20 : 4))
                 .frame(maxWidth: isUser ? 280 : 560, alignment: isUser ? .trailing : .leading)
 
-                // Tail dots for user bubbles (ArcChatBubble style)
-                if isUser {
+                // Tail dots for user bubbles (ArcChatBubble style). A personality flourish, not core
+                // chat — the founder asked to stop shipping them by default while keeping the work
+                // behind a flag (#1371). Gated on the fun/personality flag, OFF by default.
+                if Self.showsUserBubbleTail(isUser: isUser, funPersonalityEnabled: Self.funPersonalityEnabled) {
                     HStack {
                         Spacer()
                         VStack(spacing: 2) {
@@ -3401,7 +3467,7 @@ struct SharedRemChatView: View {
     // MARK: - Attachment Badge
 
     @ViewBuilder
-    private func attachmentBadge(_ content: OpenClawChatMessageContent, isUser: Bool) -> some View {
+    private func attachmentBadge(_ content: RemChatMessageContent, isUser: Bool) -> some View {
         // A sent user image rides in `content.content` as base64 (see
         // `ChatViewModel.performSend` — attachments are appended as content items
         // whose `content` is `att.data.base64EncodedString()`). Render the actual
@@ -3440,7 +3506,7 @@ struct SharedRemChatView: View {
 
     /// Wraps a decoded platform image into a SwiftUI `Image` without the
     /// `#if` branch leaking into every call site.
-    private func platformImageView(_ image: OpenClawPlatformImage) -> Image {
+    private func platformImageView(_ image: RemGatewayPlatformImage) -> Image {
         #if canImport(UIKit)
         Image(uiImage: image)
         #else
@@ -3453,7 +3519,7 @@ struct SharedRemChatView: View {
     /// a couple of common nested shapes (`{ data: … }`, `{ source: { data: … } }`)
     /// in case the gateway echoes attachments in a structured form. Returns `nil`
     /// when the payload is absent or not a decodable image.
-    private static func attachmentImage(_ content: OpenClawChatMessageContent) -> OpenClawPlatformImage? {
+    private static func attachmentImage(_ content: RemChatMessageContent) -> RemGatewayPlatformImage? {
         guard let base64 = attachmentBase64(content) else { return nil }
         let payload: String
         if base64.hasPrefix("data:"), let comma = base64.firstIndex(of: ",") {
@@ -3471,7 +3537,7 @@ struct SharedRemChatView: View {
         #endif
     }
 
-    private static func attachmentBase64(_ content: OpenClawChatMessageContent) -> String? {
+    private static func attachmentBase64(_ content: RemChatMessageContent) -> String? {
         guard let value = content.content else { return nil }
         if let string = value.stringValue { return string }
         if let dict = value.dictionaryValue {
@@ -3627,7 +3693,7 @@ struct SharedRemChatView: View {
 
     @ViewBuilder
     /// Humanize the raw run-error text the gateway surfaces before showing it in
-    /// the banner. The upstream `OpenClawChatViewModel` already clears the pending
+    /// the banner. The upstream `RemChatViewModel` already clears the pending
     /// run and sets `errorText` on a `state:"error"` chat event (see
     /// `handleChatEvent`), and falls back to a 120s pending-run watchdog
     /// (`armPendingRunTimeout`), so the run no longer spins forever — but the text
@@ -3754,12 +3820,12 @@ struct SharedRemChatView: View {
     /// There is no structured field to route on here (CLAUDE.md principle 5): the
     /// chat `errorKind` upstream is an agent-outcome enum — refusal / timeout /
     /// rate_limit / context_length / unknown, none of them "transport" — and
-    /// `OpenClawChatEventPayload` drops it anyway, surfacing only `errorMessage`
-    /// as a String. So we anchor on the context prefix OpenClawKit's own
+    /// `RemChatEventPayload` drops it anyway, surfacing only `errorMessage`
+    /// as a String. So we anchor on the context prefix RemKit's own
     /// transport layer adds, not a structured origin that doesn't reach us.
     private static let ambiguousWireTokens = ["socket", "econn", "handshake"]
 
-    /// Markers OpenClawKit only attaches to genuine gateway-transport failures:
+    /// Markers RemKit only attaches to genuine gateway-transport failures:
     /// the `wss://`/`ws://` URL and the context prefixes `GatewayChannel.wrap`
     /// prepends to every wrapped transport error ("gateway connect",
     /// "connect to gateway @ wss://…", "gateway send …", "gateway receive",
@@ -3971,7 +4037,7 @@ struct SharedRemChatView: View {
     private var modelPickerMenu: some View {
         Menu {
             Button {
-                viewModel.selectModel(OpenClawChatViewModel.defaultModelSelectionID)
+                viewModel.selectModel(RemChatViewModel.defaultModelSelectionID)
             } label: {
                 if isDefaultModelSelected {
                     Label(ModelPickerPresentation.automaticTitle, systemImage: "checkmark")
@@ -4318,7 +4384,7 @@ struct SharedRemChatView: View {
     /// on Rem's side**, and hands each off to the view model, which validates
     /// type/size and builds a preview.
     ///
-    /// Why compress here: `OpenClawChatViewModel.addImageAttachment` enforces a
+    /// Why compress here: `RemChatViewModel.addImageAttachment` enforces a
     /// 5 MB cap (`ChatViewModel.swift` in the read-only `openclaw/` submodule —
     /// `data.count > 5_000_000`). Typical phone photos are 3–12 MB and get
     /// rejected with "Attachment … exceeds 5 MB limit". We can't edit the
@@ -4413,7 +4479,7 @@ struct SharedRemChatView: View {
 
     /// Whether the current selection is the gateway/plan default (no override).
     private var isDefaultModelSelected: Bool {
-        effectiveModelSelectionID == OpenClawChatViewModel.defaultModelSelectionID
+        effectiveModelSelectionID == RemChatViewModel.defaultModelSelectionID
     }
 
     // MARK: - Send Button
@@ -4454,7 +4520,7 @@ struct SharedRemChatView: View {
     // MARK: - Attachment Chip
 
     @ViewBuilder
-    private func attachmentChip(_ att: OpenClawPendingAttachment) -> some View {
+    private func attachmentChip(_ att: RemPendingAttachment) -> some View {
         // ChatGPT/Claude-style chip: a rounded thumbnail with a corner "x" to
         // remove — no filename text. The "x" overlaps the top-trailing corner,
         // so the strip carries a little top/trailing padding to avoid clipping.
@@ -4523,7 +4589,7 @@ struct SharedRemChatView: View {
             // provider choice; an older/local upstream gateway that lacks that RPC must not
             // strand Automatic chat.
             requiresProviderEvidence:
-                effectiveModelSelectionID != OpenClawChatViewModel.defaultModelSelectionID,
+                effectiveModelSelectionID != RemChatViewModel.defaultModelSelectionID,
             isPreparingSend: viewModel.isPreparingSend,
             viewModelCanSend: viewModel.canSend,
             browserCapabilityAttached: browserCapabilityAttached)
@@ -4606,7 +4672,7 @@ struct SharedRemChatView: View {
     // MARK: - Markdown Preprocessing
 
     /// Clean assistant markdown for display. Mirrors
-    /// upstream `ChatMarkdownPreprocessor` (internal to OpenClawChatUI) by
+    /// upstream `ChatMarkdownPreprocessor` (internal to RemChatUI) by
     /// stripping gateway metadata before local rendering handles markdown
     /// text and fenced code blocks.
     ///
@@ -4695,7 +4761,7 @@ struct SharedRemChatView: View {
 
     private func resolveToolCallDisplay(
         name: String?,
-        args: OpenClawKit.AnyCodable?,
+        args: RemKit.AnyCodable?,
         phase: ActionLifecycleDisplay.Phase = .live
     ) -> ActionLifecycleDisplay {
         let lowerName = (name ?? "").lowercased()
@@ -4721,7 +4787,7 @@ struct SharedRemChatView: View {
         ["write", "edit", "exec"]
     }
 
-    private func resolveNodesDisplay(action: String?, args: OpenClawKit.AnyCodable?) -> ActionLifecycleDisplay {
+    private func resolveNodesDisplay(action: String?, args: RemKit.AnyCodable?) -> ActionLifecycleDisplay {
         switch action {
         case "status":
             return ActionLifecycleDisplay(sfSymbol: "macbook.and.iphone", text: "Checking connected devices")
@@ -4748,7 +4814,7 @@ struct SharedRemChatView: View {
         }
     }
 
-    private func resolveNodeInvokeDisplay(args: OpenClawKit.AnyCodable?) -> ActionLifecycleDisplay {
+    private func resolveNodeInvokeDisplay(args: RemKit.AnyCodable?) -> ActionLifecycleDisplay {
         let command = extractArgString(from: args, key: "command") ?? ""
         let (sfSymbol, verb) = nodeCommandDisplay(command)
         return ActionLifecycleDisplay(sfSymbol: sfSymbol, text: verb)
@@ -4796,12 +4862,12 @@ struct SharedRemChatView: View {
         }
     }
 
-    private func extractArgString(from args: OpenClawKit.AnyCodable?, key: String) -> String? {
+    private func extractArgString(from args: RemKit.AnyCodable?, key: String) -> String? {
         guard let args else { return nil }
         if let dict = args.value as? [String: Any], let val = dict[key] as? String {
             return val
         }
-        if let dict = args.value as? [String: OpenClawKit.AnyCodable], let val = dict[key]?.value as? String {
+        if let dict = args.value as? [String: RemKit.AnyCodable], let val = dict[key]?.value as? String {
             return val
         }
         return nil
@@ -4920,6 +4986,17 @@ struct SharedRemChatView: View {
         }
 
         return segments.isEmpty ? [StreamingSegment(kind: .response, text: trimmed)] : segments
+    }
+}
+
+/// Reports the measured height of the chat's pinned bottom controls (browser card + banners +
+/// composer + voice bar) up to `SharedRemChatView`, which reserves an equal transcript bottom inset
+/// so content never hides behind the composer at the end of scroll. Mirrors the composer's own
+/// `ComposerFieldHeightKey` idiom in `RemComposerBar`.
+private struct BottomControlsHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -5124,13 +5201,13 @@ struct SharedChatTypingDots: View {
 /// `sheet` item presentation.
 struct ZoomedImage: Identifiable {
     let id = UUID()
-    let image: OpenClawPlatformImage
+    let image: RemGatewayPlatformImage
 }
 
 /// Pinch / double-tap zoomable full-screen viewer for a sent image. Mirrors the
 /// ChatGPT/Claude "tap an image to view larger" behavior.
 struct FullScreenImageViewer: View {
-    let image: OpenClawPlatformImage
+    let image: RemGatewayPlatformImage
     let onClose: () -> Void
 
     @State private var scale: CGFloat = 1

@@ -3,8 +3,8 @@ import '../crypto-polyfill.js'; // MUST be first — installs globalThis.crypto 
  * Daily check-ins — the founder's simplified routines. At each enabled global check-in
  * time (morning / midday / night, per user, in the user's own timezone) this script
  * builds the user's Daily Brief over ALL their tasks (brief.service.gatherBrief) and,
- * only after the canonical artifact is visibly delivered to Today, fires ONE push
- * (push.service.sendPush) that opens and reads that exact conversation. There are no
+ * only after the canonical authored artifact is persisted, fires ONE push
+ * (push.service.sendPush) that opens the authenticated card and reads that exact prose. There are no
  * per-task schedules and no per-routine prompts — agent instructions live on the tasks
  * and connectors are global; the only schedule is the three `user_checkins` rows.
  *
@@ -183,7 +183,7 @@ const SLOT_TITLES: Record<CheckinSlot, string> = {
 };
 
 /**
- * Build the push from the delivered canonical artifact. Its summary is the same prose authority
+ * Build the push from the canonical authored artifact. Its summary is the same prose authority
  * Agenda and Today use; deterministic bucket copy can disagree while a replacement is landing.
  * `collapseId` + `threadId` make newer briefs replace/group older notifications, while taps always
  * resolve forward to the newest delivered artifact rather than narrating stale payload prose.
@@ -277,24 +277,16 @@ export async function sendBriefPushMonotonically(
     }
 
     // Re-read the canonical pointer after acquiring the notification fence. A worker may have read
-    // an older delivered artifact before a newer process won this lock.
-    const canonical = await client.query<{ authored_slot: TimeOfDay; delivered: boolean }>(
-      `SELECT b.authored_slot,
-              EXISTS (
-                SELECT 1
-                  FROM daily_brief_artifacts a
-                  JOIN daily_brief_artifact_deliveries d
-                    ON d.artifact_id = a.id
-                   AND d.artifact_revision = a.revision
-                   AND d.session_key = 'rem-orchestrator'
-                   AND d.state = 'delivered'
-                 WHERE a.user_id = b.user_id
-                   AND a.brief_date = b.brief_date
-                   AND a.authored_slot = b.authored_slot
-                   AND a.source = 'gateway'
-                   AND a.markdown = b.markdown
-              ) AS delivered
+    // an older authored artifact before a newer process won this lock.
+    const canonical = await client.query<{ authored_slot: TimeOfDay }>(
+      `SELECT b.authored_slot
          FROM daily_briefs b
+         JOIN daily_brief_artifacts a
+           ON a.user_id = b.user_id
+          AND a.brief_date = b.brief_date
+          AND a.authored_slot = b.authored_slot
+          AND a.source = 'gateway'
+          AND a.markdown = b.markdown
         WHERE b.user_id = $1::uuid AND b.brief_date = $2::date
           AND b.source = 'gateway'
         LIMIT 1`,
@@ -306,7 +298,7 @@ export async function sendBriefPushMonotonically(
       transactionOpen = false;
       return { status: 'superseded', results: [] };
     }
-    if (!current || current.authored_slot !== slot || !current.delivered) {
+    if (!current || current.authored_slot !== slot) {
       await client.query('COMMIT');
       transactionOpen = false;
       return { status: 'artifact_unavailable', results: [] };
@@ -502,6 +494,10 @@ export async function deliverCheckin(
     sessionKey,
   );
   if (!artifact?.delivered) {
+    // During the mixed-client rollout, only transcript-delivered artifacts may trigger APNs.
+    // Older clients require brief_session_key and cannot read a canonical-only artifact yet.
+    // Gateway-free Rem-managed artifacts remain visible/readable when the updated app fetches
+    // /brief directly; version-capable push fanout is a separate migration boundary.
     return retryOrConsume('artifact_not_delivered');
   }
 
@@ -535,7 +531,7 @@ export async function deliverCheckin(
   // Preserve the schedule only when at least one transport/throttle/server failure may recover;
   // the push service removes token-specific terminal rows from the registry independently.
   if (acceptedPushCount === 0 && hasRetryableDestination) {
-    // The artifact IS durably delivered here — only the push failed. Retrying re-authors a whole
+    // The artifact IS durably authored here — only the push failed. Retrying may re-enter the
     // new brief, which is why this branch must be bounded rather than left open-ended (#1279).
     return retryOrConsume('push_not_accepted', true);
   }

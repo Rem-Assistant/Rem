@@ -29,17 +29,19 @@ Two distinct artifacts have different obligations, and the distinction matters:
 1. OPENCLAW (MIT)
 ================================================================================
 
-Rem is built on OpenClaw, via our fork at https://github.com/Rem-Assistant/openclaw
-(vendored as the `openclaw/` git submodule).
+Rem's shared client layer — the gateway client, chat UI, and protocol — is a fork
+of OpenClawKit from the OpenClaw project, vendored in-tree at `Packages/RemKit`
+(which carries its own copy of the grant below in `Packages/RemKit/LICENSE`).
 
   Upstream project: https://github.com/openclaw/openclaw
+  Fork:             https://github.com/Rem-Assistant/openclaw
   License:          MIT
   Pinned commit:    fb3a259572ff5d29750576d9528e7443df65ad99
 
-The `openclaw/` submodule and our fork remain under MIT, matching upstream. This
-is deliberate: Apache-2.0 is only one-way compatible with MIT, so licensing the
-fork Apache-2.0 would make our patches un-mergeable back into upstream. We
-actively upstream fixes and intend to keep that path open.
+`Packages/RemKit` and our fork remain under MIT, matching upstream. This is
+deliberate: Apache-2.0 is only one-way compatible with MIT, so licensing the fork
+Apache-2.0 would make our patches un-mergeable back into upstream. We actively
+upstream fixes and intend to keep that path open.
 
 At the commit we pin, the copyright line reads:
 

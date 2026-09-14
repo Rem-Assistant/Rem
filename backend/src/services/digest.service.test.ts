@@ -3,12 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
 
-// The ONE runtime a digest may use. Mocked so a test states the gateway outcome it is about
-// directly, instead of encoding it as "the Nth pool query returns a row without gateway_url".
+// The Rem-owned runtime a digest may use. Mocked so these tests exercise the product boundary
+// without reaching provider I/O or the runtime's PostgreSQL run ledger.
 const runAgentTurnMock = vi.hoisted(() => vi.fn());
-vi.mock('./gateway-agent.service.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./gateway-agent.service.js')>()),
-  runAgentTurnOnGateway: runAgentTurnMock,
+vi.mock('../runtime/agent-runtime.service.js', () => ({
+  runAgentTurnOnSharedRuntime: runAgentTurnMock,
 }));
 
 import {
@@ -224,9 +223,7 @@ describe('generateDigest resolution order', () => {
     vi.clearAllMocks();
     delete process.env.GMI_API_KEY;
     vi.unstubAllGlobals();
-    // Default for this block: the user's own gateway cannot take the turn. That is the exact
-    // condition the deleted GMI fallback used to catch, so it is the right default here.
-    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'no_gateway' });
+    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'unavailable' });
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -258,24 +255,14 @@ describe('generateDigest resolution order', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('falls back to a local summary when the gateway cannot take the turn', async () => {
+  it('falls back to a local summary when the Rem runtime cannot take the turn', async () => {
     mockGatherWithOpenTask();
     const d = await generateDigest(USER_ID, 'morning_brief', NOON);
     expect(d.source).toBe('fallback');
     expect(d.body).toContain('Ship digests');
   });
 
-  it('NEVER spends the operator key when the user gateway fails, even with GMI configured and healthy', async () => {
-    // THE REGRESSION. A user whose runtime is their own — a Mac local gateway, a self-hosted or
-    // Railway-deployed one — used to have their digest run on THEIR key on the happy path and
-    // silently on REM's the moment their gateway failed to wake. Same feature, same user, two
-    // payers, decided by a transient, and invisible afterwards because the stored row said
-    // source='gmi' either way. BYOK is a global per-user mode, so no per-feature path may pick
-    // the key (#1327 removed the identical fallback from task runs).
-    //
-    // The setup is deliberately the FRIENDLIEST possible case for the old behaviour: the org key
-    // is present and a GMI call would succeed. Restoring the fallback therefore turns this red
-    // on both assertions, not just the source.
+  it('does not bypass the Rem runtime with an unmetered direct provider call', async () => {
     process.env.GMI_API_KEY = 'k';
     mockGatherWithOpenTask();
     const fetchSpy = vi.fn(async () => ({
@@ -294,9 +281,7 @@ describe('generateDigest resolution order', () => {
     expect(d.body).toContain('Ship digests');
   });
 
-  it('attributes a digest the user own gateway wrote to the gateway, not to a backend model', async () => {
-    // The other half of the contract: removing the fallback must not remove the feature. When
-    // the gateway DOES answer, its prose is the digest and `model` records which runtime ran.
+  it('runs a populated digest through the Rem-owned tool-free runtime contract', async () => {
     process.env.GMI_API_KEY = 'k';
     mockGatherWithOpenTask();
     const fetchSpy = vi.fn();
@@ -306,15 +291,61 @@ describe('generateDigest resolution order', () => {
       text: 'You have 1 high-priority task.',
       runId: 'r1',
       sessionKey: 'rem-digest',
+      model: 'runtime-model',
+      provenance: {
+        runtimeId: 'rem_shared',
+        persistenceKind: 'rem_runtime',
+        billingMode: 'rem_managed',
+      },
       toolCalls: [],
     });
 
     const d = await generateDigest(USER_ID, 'morning_brief', NOON);
 
     expect(d.source).toBe('gmi');
-    expect(d.model).toBe('gateway');
+    expect(d.model).toBe('runtime-model');
     expect(d.body).toBe('You have 1 high-priority task.');
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(runAgentTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: { userId: USER_ID, authority: 'internal_service' },
+      sessionKey: 'rem-digest-morning_brief-20260626',
+      idempotencyKey: expect.stringMatching(/^rem-digest:morning_brief:[a-f0-9-]{36}$/),
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+    }));
+  });
+
+  it('falls back when loading the shared runtime rejects', async () => {
+    mockGatherWithOpenTask();
+    runAgentTurnMock.mockRejectedValue(new Error('module unavailable'));
+    const d = await generateDigest(USER_ID, 'morning_brief', NOON);
+    expect(d.source).toBe('fallback');
+    expect(d.body).toContain('Ship digests');
+  });
+
+  it('gives a later refresh a fresh dispatch after a terminal runtime failure', async () => {
+    mockGatherWithOpenTask();
+    mockGatherWithOpenTask();
+    runAgentTurnMock
+      .mockResolvedValueOnce({ ok: false, reason: 'timeout' })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: 'Recovered digest.',
+        runId: 'r2',
+        sessionKey: 'rem-digest',
+        model: 'runtime-model',
+        provenance: {
+          runtimeId: 'rem_shared',
+          persistenceKind: 'rem_runtime',
+          billingMode: 'rem_managed',
+        },
+        toolCalls: [],
+      });
+
+    expect((await generateDigest(USER_ID, 'morning_brief', NOON)).source).toBe('fallback');
+    expect((await generateDigest(USER_ID, 'morning_brief', NOON)).body).toBe('Recovered digest.');
+    const firstKey = runAgentTurnMock.mock.calls[0][0].idempotencyKey;
+    const secondKey = runAgentTurnMock.mock.calls[1][0].idempotencyKey;
+    expect(secondKey).not.toBe(firstKey);
   });
 });
 

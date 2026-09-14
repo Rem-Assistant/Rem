@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
-import OpenClawChatUI
-import OpenClawKit
+import RemChatUI
+import RemKit
 
 /// The only projection boundary for unknown tool output. It separates safe,
 /// renderable images from adjacent text and conservatively suppresses arbitrary
@@ -194,13 +194,13 @@ struct UnknownToolContentProjection: Equatable {
 
 /// Routes tool result messages to the appropriate rich card view.
 struct ToolResultCardView: View {
-    let message: OpenClawChatMessage
-    let messages: [OpenClawChatMessage]
+    let message: RemChatMessage
+    let messages: [RemChatMessage]
     let contentIndexes: Set<Int>?
 
     init(
-        message: OpenClawChatMessage,
-        messages: [OpenClawChatMessage],
+        message: RemChatMessage,
+        messages: [RemChatMessage],
         contentIndexes: Set<Int>? = nil
     ) {
         self.message = message
@@ -244,7 +244,7 @@ struct ToolResultCardView: View {
     /// OpenClaw also emits blocks that place the payload in the generic `content`
     /// field (string, or a nested `{ text: … }` shape). Fall back to those so a
     /// file-read result isn't silently empty and mis-routed.
-    private func toolResultText(_ content: OpenClawChatMessageContent) -> String {
+    private func toolResultText(_ content: RemChatMessageContent) -> String {
         if let text = content.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             return text
         }
@@ -322,11 +322,11 @@ struct ToolResultCardView: View {
         return max(count, 1)
     }
 
-    private func messageContainsConsolidatedResult(_ message: OpenClawChatMessage, key: String) -> Bool {
+    private func messageContainsConsolidatedResult(_ message: RemChatMessage, key: String) -> Bool {
         messageResultCount(message, key: key) > 0
     }
 
-    private func messageResultCount(_ message: OpenClawChatMessage, key: String) -> Int {
+    private func messageResultCount(_ message: RemChatMessage, key: String) -> Int {
         message.content.reduce(into: 0) { count, content in
             let text = (content.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }

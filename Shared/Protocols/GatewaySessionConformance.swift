@@ -8,16 +8,16 @@ import Foundation
 //
 // When both targets include Shared/ files, add this file to both targets
 // and REMOVE the old enum definitions from:
-//   - iOS: RemClaw/Sources/Gateway/GatewayClientProtocol.swift (lines 54-77)
-//   - Mac: RemClawMac/Sources/Gateway/MacGatewaySessionManager.swift (lines 619-642)
+//   - iOS: Rem/Sources/Gateway/GatewayClientProtocol.swift (lines 54-77)
+//   - Mac: RemMac/Sources/Gateway/MacGatewaySessionManager.swift (lines 619-642)
 
 typealias RemGatewayConnectionState = GatewayConnectionState
 typealias MacConnectionState = GatewayConnectionState
 
 // Also unify the linked device types.
 // Remove the old definitions from:
-//   - iOS: RemClaw/Sources/Gateway/GatewaySessionManager.swift (LinkedDevice, DevicePlatform, DeviceToken, LinkedDevicesResponse)
-//   - Mac: RemClawMac/Sources/Gateway/MacGatewaySessionManager.swift (MacLinkedDevice, MacDevicePlatform, MacDeviceToken, MacLinkedDevicesResponse)
+//   - iOS: Rem/Sources/Gateway/GatewaySessionManager.swift (LinkedDevice, DevicePlatform, DeviceToken, LinkedDevicesResponse)
+//   - Mac: RemMac/Sources/Gateway/MacGatewaySessionManager.swift (MacLinkedDevice, MacDevicePlatform, MacDeviceToken, MacLinkedDevicesResponse)
 //
 // For Mac backward compat:
 typealias MacLinkedDevice = LinkedDevice

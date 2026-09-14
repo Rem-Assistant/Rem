@@ -54,11 +54,14 @@ struct SuggestedTaskRow: View {
                     .font(.headline)
                     .foregroundColor(.primary)
                     .lineLimit(2)
-                Text(suggestion.subtitle)
-                    .font(DesignTokens.Typography.caption1)
-                    .foregroundColor(DesignTokens.Color.labelSecondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                // The WHY line, plus a trailing "From {source icon(s)}" and metadata cleaning —
+                // one shared component so the card, the overflow sheet, and the empty-chat
+                // starter render this line identically (#1369).
+                SuggestionMetadataLine(
+                    rawSubtitle: suggestion.subtitle,
+                    badges: SuggestionSourcePresentation.badges(for: suggestion),
+                    contentLineLimit: 2
+                )
             }
             // Claim the row's full width. Without this the HStack hugs its content, so the dashed
             // ring shrink-wraps each row to the length of its own title — the rows come out ragged

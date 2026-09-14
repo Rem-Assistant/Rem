@@ -32,7 +32,7 @@ struct SharedGatewayListView<Gateway: GatewaySessionProviding>: View {
     }
 
     var body: some View {
-        openClawListChrome
+        gatewayListChrome
             .navigationTitle("Machines")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -49,7 +49,7 @@ struct SharedGatewayListView<Gateway: GatewaySessionProviding>: View {
     // follow `DesignTokens.Layout` (Native reference frames), **leading** in
     // the split detail — same as system Settings, not a centered card.
     @ViewBuilder
-    private var openClawListContent: some View {
+    private var gatewayListContent: some View {
         if let store = configStore {
             Section {
                 if sortedConfigs.isEmpty {
@@ -85,13 +85,13 @@ struct SharedGatewayListView<Gateway: GatewaySessionProviding>: View {
     }
 
     @ViewBuilder
-    private var openClawListChrome: some View {
+    private var gatewayListChrome: some View {
         #if os(macOS)
-        Form { openClawListContent }
+        Form { gatewayListContent }
             .formStyle(.grouped)
             .macSettingsCenteredColumn()
         #else
-        List { openClawListContent }
+        List { gatewayListContent }
             .listStyle(.insetGrouped)
         #endif
     }

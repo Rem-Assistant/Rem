@@ -19,6 +19,7 @@ struct SharedSettingsFixtureView: View {
                 profileName: "Avery Lane",
                 profileSubtitle: "avery@example.com",
                 permissionsView: { fixtureDetail("Permissions", icon: "hand.raised.fill") },
+                billingView: { fixtureDetail("Billing & Usage", icon: "creditcard.fill") },
                 aboutView: { fixtureDetail("About", icon: "info.circle.fill") },
                 gatewayBackupView: {
                     AnyView(fixtureDetail("Backup", icon: "externaldrive.fill"))

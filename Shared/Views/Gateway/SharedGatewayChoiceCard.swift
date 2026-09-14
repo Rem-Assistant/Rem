@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Reusable card row for `SharedChooseGatewayView` and platform-specific
-/// chooser flows. Extracted from `RemClawMac/Sources/UI/GatewayChoiceView.swift`
+/// chooser flows. Extracted from `RemMac/Sources/UI/GatewayChoiceView.swift`
 /// so iOS and Mac render the same card.
 struct SharedGatewayChoiceCard: View {
     let icon: String

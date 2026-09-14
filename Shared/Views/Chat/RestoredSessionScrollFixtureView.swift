@@ -1,17 +1,17 @@
 import Foundation
 import SwiftUI
-import OpenClawChatUI
-import OpenClawKit
-import OpenClawProtocol
+import RemChatUI
+import RemKit
+import RemProtocol
 
 #if DEBUG
 struct RestoredSessionScrollFixtureView: View {
-    @State private var viewModel: OpenClawChatViewModel
+    @State private var viewModel: RemChatViewModel
     @State private var didRequestRealHistory = false
 
     init() {
         let transport = RestoredSessionScrollFixtureTransport()
-        self._viewModel = State(initialValue: OpenClawChatViewModel(
+        self._viewModel = State(initialValue: RemChatViewModel(
             sessionKey: RestoredSessionScrollFixtureTransport.sessionKey,
             transport: transport,
             initialThinkingLevel: "low"
@@ -31,12 +31,12 @@ struct RestoredSessionScrollFixtureView: View {
     }
 }
 
-private final class RestoredSessionScrollFixtureTransport: @unchecked Sendable, OpenClawChatTransport {
+private final class RestoredSessionScrollFixtureTransport: @unchecked Sendable, RemChatTransport {
     static let sessionKey = "fixture-restored-long-session"
     private let requestLock = NSLock()
     private var historyRequestCount = 0
 
-    func requestHistory(sessionKey: String) async throws -> OpenClawChatHistoryPayload {
+    func requestHistory(sessionKey: String) async throws -> RemChatHistoryPayload {
         let requestIndex = nextHistoryRequestIndex()
         let payload: [String: Any] = [
             "sessionKey": sessionKey,
@@ -45,19 +45,19 @@ private final class RestoredSessionScrollFixtureTransport: @unchecked Sendable, 
             "messages": requestIndex == 1 ? Self.staleSnapshotMessages() : Self.fixtureMessages()
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
-        return try JSONDecoder().decode(OpenClawChatHistoryPayload.self, from: data)
+        return try JSONDecoder().decode(RemChatHistoryPayload.self, from: data)
     }
 
-    func listModels() async throws -> [OpenClawChatModelChoice] { [] }
+    func listModels() async throws -> [RemChatModelChoice] { [] }
 
     func sendMessage(
         sessionKey _: String,
         message _: String,
         thinking _: String,
         idempotencyKey _: String,
-        attachments _: [OpenClawChatAttachmentPayload]
-    ) async throws -> OpenClawChatSendResponse {
-        try Self.decode(OpenClawChatSendResponse.self, from: [
+        attachments _: [RemChatAttachmentPayload]
+    ) async throws -> RemChatSendResponse {
+        try Self.decode(RemChatSendResponse.self, from: [
             "runId": "fixture-run",
             "status": "complete"
         ])
@@ -65,12 +65,12 @@ private final class RestoredSessionScrollFixtureTransport: @unchecked Sendable, 
 
     func abortRun(sessionKey _: String, runId _: String) async throws {}
 
-    func listSessions(limit _: Int?) async throws -> OpenClawChatSessionsListResponse {
-        OpenClawChatSessionsListResponse(
+    func listSessions(limit _: Int?) async throws -> RemChatSessionsListResponse {
+        RemChatSessionsListResponse(
             ts: Date().timeIntervalSince1970 * 1000,
             path: nil,
             count: 1,
-            defaults: OpenClawChatSessionsDefaults(
+            defaults: RemChatSessionsDefaults(
                 model: nil,
                 contextTokens: nil,
                 thinkingLevels: nil,
@@ -85,7 +85,7 @@ private final class RestoredSessionScrollFixtureTransport: @unchecked Sendable, 
     func setSessionModel(sessionKey _: String, model _: String?) async throws {}
     func setSessionThinking(sessionKey _: String, thinkingLevel _: String) async throws {}
     func requestHealth(timeoutMs _: Int) async throws -> Bool { true }
-    func events() -> AsyncStream<OpenClawChatTransportEvent> { AsyncStream { $0.finish() } }
+    func events() -> AsyncStream<RemChatTransportEvent> { AsyncStream { $0.finish() } }
     func setActiveSessionKey(_: String) async throws {}
     func resetSession(sessionKey _: String) async throws {}
     func compactSession(sessionKey _: String) async throws {}

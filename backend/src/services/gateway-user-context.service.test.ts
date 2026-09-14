@@ -22,7 +22,7 @@ const USER_ID = 'f8679a96-0000-4000-8000-000000000001';
 beforeEach(() => {
   vi.clearAllMocks();
   gatewayServiceMock.getGatewayCredentials.mockResolvedValue({
-    gateway_url: 'https://remclaw-00000000.fly.dev',
+    gateway_url: 'https://remclaw-f8679a968c6a.fly.dev',
     gateway_token: 'gateway-token',
   });
   gatewayServiceMock.getSetupPassword.mockResolvedValue('setup-password');
@@ -44,7 +44,7 @@ describe('syncUserTimezoneToGateway', () => {
 
     expect(timezoneServiceMock.resolveStoredUserTimezone).not.toHaveBeenCalled();
     expect(gatewayPairServiceMock.patchGatewayConfig).toHaveBeenCalledWith(
-      'https://remclaw-00000000.fly.dev',
+      'https://remclaw-f8679a968c6a.fly.dev',
       'gateway-token',
       { agents: { defaults: { userTimezone: 'Europe/Paris' } } },
       'setup-password',

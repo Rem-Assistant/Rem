@@ -26,8 +26,8 @@ import AppKit
 // Scope note:
 //   `config.patch` requires `operator.admin` (openclaw/src/gateway/method-scopes.test.ts
 //   line 37). Both platforms already request admin: iOS via
-//   `RemClaw/Sources/Gateway/GatewayClient.swift` `reconnectOperator` (line 438),
-//   and Mac via `RemClawMac/Sources/Gateway/MacGatewayClient.swift` (line 128,
+//   `Rem/Sources/Gateway/GatewayClient.swift` `reconnectOperator` (line 438),
+//   and Mac via `RemMac/Sources/Gateway/MacGatewayClient.swift` (line 128,
 //   widened in PR #326). Add/remove works symmetrically on both platforms.
 //   Any scope-related failure surfaces the gateway's own error verbatim rather
 //   than being synthesized.

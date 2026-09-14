@@ -12,10 +12,33 @@ const poolMock = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(),
 }));
-vi.mock('../db/pool.js', () => ({ pool: poolMock }));
+const conversationClientMock = vi.hoisted(() => ({
+  query: vi.fn(),
+  release: vi.fn(),
+}));
+const taskConversationPoolMock = vi.hoisted(() => ({ connect: vi.fn() }));
+vi.mock('../db/pool.js', () => ({
+  pool: poolMock,
+  taskConversationPool: taskConversationPoolMock,
+}));
+
+const executeStatusMock = vi.hoisted(() => vi.fn());
+vi.mock('../runtime/rem-task-tool-execution.js', () => ({
+  executeTrustedAutomationTaskStatusProposal: executeStatusMock,
+}));
+
+const runAgentOnTaskMock = vi.hoisted(() => vi.fn());
+vi.mock('./task-agent.service.js', () => ({ runAgentOnTask: runAgentOnTaskMock }));
+
+const resolveModeMock = vi.hoisted(() => vi.fn());
+vi.mock('./run-block.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./run-block.js')>()),
+  resolveModelRuntimeMode: resolveModeMock,
+}));
 
 import {
   runReadyTask,
+  defaultReadyTaskAgentRunner,
   sweepReadyTasks,
   applyPerUserCap,
   findReadyTasks,
@@ -45,18 +68,26 @@ function task(overrides: Partial<ReadyTask> = {}): ReadyTask {
   };
 }
 
-/** A stub gateway runner that records its calls and returns a fixed result. */
+/** A stub observe runner that records its calls and returns a durable proposal. */
 function stubAgent(
   result:
     | {
         ok: true;
         reply: string;
-        proposedStatus: 'completed' | 'in_progress' | 'blocked' | null;
+        proposedStatus: 'pending' | 'completed' | 'in_progress' | 'blocked';
         taskContext?: string | null;
+        externalContentInfluenced?: boolean;
       }
     | { ok: false; reason: string } = { ok: true, reply: 'Did it.', proposedStatus: 'completed' },
 ) {
-  const run = vi.fn(async () => result);
+  const run = vi.fn(async () => result.ok
+    ? {
+        externalContentInfluenced: false,
+        ...result,
+        proposalRunId: 'proposal-run-1',
+        toolCallId: 'report-call-1',
+      }
+    : result);
   return { agent: { run } as ReadyTaskAgentRunner, run };
 }
 
@@ -76,44 +107,119 @@ function lastTasksUpdateOnClient() {
     .find((c) => typeof c[0] === 'string' && c[0].includes('UPDATE tasks') && c[0].includes('SET run_status'));
 }
 
-/** The description write (migration 120) issued inside the run's transaction, if any. */
-function descriptionWriteOnClient() {
-  return clientMock.query.mock.calls.find(
-    (c) => typeof c[0] === 'string' && c[0].includes('UPDATE tasks') && c[0].includes('SET description'),
-  );
-}
-
 /** Never-deny screen so the deny-list branch doesn't interfere with happy-path tests. */
 const allowScreen = () => ({ denied: false as const, categories: [] });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resolveModeMock.mockResolvedValue('rem_managed');
   // Reset the default client query behaviour after clearAllMocks wiped the implementation.
   clientMock.query.mockImplementation(async () => ({ rows: [{ id: COMMENT_ID }], rowCount: 1 }));
   poolMock.connect.mockImplementation(async () => clientMock);
+  executeStatusMock.mockResolvedValue({
+    kind: 'succeeded',
+    task: { id: TASK_ID },
+    comment: { id: COMMENT_ID },
+    effectId: 'effect-1',
+    replayed: false,
+  });
+  runAgentOnTaskMock.mockReset();
+  conversationClientMock.query.mockResolvedValue({ rows: [{ acquired: true }] });
+  taskConversationPoolMock.connect.mockResolvedValue(conversationClientMock);
+});
+
+describe('defaultReadyTaskAgentRunner', () => {
+  it('uses the canonical Rem observe turn with trusted-automation authority', async () => {
+    runAgentOnTaskMock.mockResolvedValue({
+      reply: 'Prepared the outline.',
+      proposedStatus: 'completed',
+      taskContext: 'Outline is ready.',
+      verdictSource: 'tool_call',
+      runtime: { persistenceKind: 'rem_runtime' },
+      taskUpdateProposal: { runtimeRunId: 'proposal-run-1', toolCallId: 'report-call-1' },
+    });
+
+    const result = await defaultReadyTaskAgentRunner.run({
+      task: task({
+        description: 'User notes\n\n<!-- rem:agent-context -->\nUnproven prior context\n<!-- /rem:agent-context -->',
+      }),
+      comments: [
+        { author_kind: 'user', author_label: null, body: 'Please keep it short.' },
+        { author_kind: 'cloud_agent', author_label: 'Rem', body: 'Unproven prior output.' },
+      ],
+      sessionKey: taskSessionKey(TASK_ID),
+      idempotencyKey: 'sweep-run-1',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      proposedStatus: 'completed',
+      proposalRunId: 'proposal-run-1',
+      toolCallId: 'report-call-1',
+      externalContentInfluenced: false,
+    });
+    expect(runAgentOnTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: TASK_ID,
+        description_user: 'User notes',
+        description_agent: null,
+      }),
+      [{ author_kind: 'user', body: 'Please keep it short.' }],
+      expect.stringContaining('UNATTENDED'),
+      expect.objectContaining({
+        userId: USER_ID,
+        authority: 'trusted_automation',
+        sessionKey: taskSessionKey(TASK_ID),
+        idempotencyKey: 'sweep-run-1',
+      }),
+    );
+  });
 });
 
 describe('taskSessionKey', () => {
   it('normalizes device-style uppercase UUIDs to the backend canonical key', () => {
     expect(taskSessionKey(`  ${TASK_ID.toUpperCase()}  `)).toBe(`rem-task-${TASK_ID}`);
   });
+
+  it('uses the same canonical session for unattended and interactive task turns', () => {
+    expect(taskSessionKey(TASK_ID)).toBe(`rem-task-${TASK_ID}`);
+  });
 });
 
 describe('runReadyTask — the run records what it learned (migration 120)', () => {
-  /** Make the FOR UPDATE read return a real stored description; everything else keeps
-   *  the default comment-id row so BEGIN/UPDATE/INSERT/COMMIT resolve. */
-  function clientReturningDescription(stored: string | null) {
-    clientMock.query.mockImplementation(async (sql: string) => {
-      if (typeof sql === 'string' && sql.includes('SELECT description')) {
-        return { rows: [{ description: stored }], rowCount: 1 };
-      }
-      return { rows: [{ id: COMMENT_ID, description: stored }], rowCount: 1 };
-    });
-  }
+  it('includes the bounded canonical task-chat history and fences its observed tail', async () => {
+    poolMock.query
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{
+          comments: [
+            { author_kind: 'user', author_label: 'You', body: 'Activity first.', created_at: '2026-06-30T14:00:00Z' },
+            { author_kind: 'user', author_label: 'You', body: 'Activity last.', created_at: '2026-06-30T17:00:00Z' },
+          ],
+          comment_count: 2,
+          chat_messages: [
+            { role: 'user', content: 'Use option B.', seq: 1, created_at: '2026-06-30T15:00:00Z' },
+            { role: 'assistant', content: 'I can do that.', seq: 2, created_at: '2026-06-30T16:00:00Z' },
+          ],
+          chat_message_count: 2,
+        }],
+      });
+    const { agent, run } = stubAgent();
 
-  it('writes the agent block IN THE RUN TRANSACTION and leaves the user text intact', async () => {
+    await runReadyTask(task(), NOW, { agent, screen: allowScreen });
+
+    const firstRunCall = run.mock.calls.at(0) as unknown as [any];
+    expect(firstRunCall[0].comments).toEqual([
+      { author_kind: 'user', author_label: 'You', body: 'Activity first.' },
+      { author_kind: 'user', author_label: 'You (task chat)', body: 'Use option B.' },
+      { author_kind: 'cloud_agent', author_label: 'Rem (task chat)', body: 'I can do that.' },
+      { author_kind: 'user', author_label: 'You', body: 'Activity last.' },
+    ]);
+    expect(executeStatusMock.mock.calls[0][0].productCompletion.expectedChatMessageCount).toBe(2);
+  });
+
+  it('hands task context to the audited product transaction', async () => {
     poolMock.query.mockResolvedValueOnce({ rowCount: 1 }).mockResolvedValueOnce({ rows: [] });
-    clientReturningDescription('Attorney is Ada. Deadline is the 30th.');
     const { agent } = stubAgent({
       ok: true,
       reply: 'Drafted the letter.',
@@ -123,39 +229,23 @@ describe('runReadyTask — the run records what it learned (migration 120)', () 
 
     const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
     expect(result.status).toBe('executed');
-
-    // The read takes the row lock, so a concurrent user PATCH cannot interleave.
-    const lockingRead = clientMock.query.mock.calls.find(
-      (c) => typeof c[0] === 'string' && c[0].includes('SELECT description') && c[0].includes('FOR UPDATE'),
+    expect(executeStatusMock.mock.calls[0][0].productCompletion.taskContext).toBe(
+      'Cover letter drafted; need the receipt number.',
     );
-    expect(lockingRead).toBeDefined();
-
-    const write = descriptionWriteOnClient();
-    expect(write).toBeDefined();
-    // The user's sentence survives, and the agent's state is inside its own block.
-    expect(write![1][0]).toContain('Attorney is Ada. Deadline is the 30th.');
-    expect(write![1][0]).toContain('<!-- rem:agent-context -->');
-    expect(write![1][0]).toContain('Cover letter drafted; need the receipt number.');
-
-    // Same transaction as the status apply and the comment — a description can never
-    // claim state the comment and status don't back up.
-    expect(clientMock.query.mock.calls[0][0]).toBe('BEGIN');
-    expect(clientMock.query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
   });
 
-  it('a run with nothing new to say does not touch the description at all', async () => {
+  it('preserves the no-new-context signal for the adapter no-op', async () => {
     poolMock.query.mockResolvedValueOnce({ rowCount: 1 }).mockResolvedValueOnce({ rows: [] });
-    clientReturningDescription('Attorney is Ada.');
-    const { agent } = stubAgent({ ok: true, reply: 'Nothing to add.', proposedStatus: null, taskContext: null });
+    const { agent } = stubAgent({ ok: true, reply: 'Nothing to add.', proposedStatus: 'pending', taskContext: null });
 
     await runReadyTask(task(), NOW, { agent, screen: allowScreen });
 
-    expect(descriptionWriteOnClient()).toBeUndefined();
+    expect(executeStatusMock.mock.calls[0][0].productCompletion.taskContext).toBeNull();
   });
 });
 
 describe('runReadyTask — executed path (apply-with-Undo, atomic)', () => {
-  it('claims, runs the gateway turn, applies status, and records previous_status for Undo', async () => {
+  it('claims, runs the Rem observe turn, and executes its durable proposal through the audited adapter', async () => {
     poolMock.query
       .mockResolvedValueOnce({ rowCount: 1 }) // claim
       .mockResolvedValueOnce({ rows: [] }); // gatherComments
@@ -168,77 +258,128 @@ describe('runReadyTask — executed path (apply-with-Undo, atomic)', () => {
     expect(result.commentId).toBe(COMMENT_ID);
     expect(run).toHaveBeenCalledOnce();
 
-    // Apply + comment share ONE transaction (BEGIN/…/COMMIT on a pooled client).
-    expect(poolMock.connect).toHaveBeenCalledOnce();
-    expect(clientMock.query.mock.calls[0][0]).toBe('BEGIN');
-    expect(clientMock.query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
+    expect(executeStatusMock).toHaveBeenCalledWith(expect.objectContaining({
+      userId: USER_ID,
+      taskId: TASK_ID,
+      status: 'completed',
+      sessionKey: taskSessionKey(TASK_ID),
+      proposalRunId: 'proposal-run-1',
+      toolCallId: 'report-call-1',
+      externalContentInfluenced: false,
+      productCompletion: expect.objectContaining({
+        runStatus: 'done',
+        expectedCommentCount: 0,
+        proposedStatus: 'completed',
+        previousStatus: 'pending',
+        runtime: 'rem_runtime',
+        sessionId: taskSessionKey(TASK_ID),
+        transcript: expect.objectContaining({
+          ask: 'Work on "Draft the Q3 planning outline" now.',
+          reply: 'Drafted the outline.',
+        }),
+      }),
+    }));
+  });
 
-    // Applied UPDATE sets both run_status and status.
-    const applyCall = lastTasksUpdateOnClient()!;
-    expect(applyCall[0]).toContain('SET run_status = $1, status = $2');
-    expect(applyCall[1][0]).toBe('done'); // completed → terminal run_status 'done'
-    expect(applyCall[1][1]).toBe('completed');
+  it('does not start while the canonical task conversation is already running', async () => {
+    conversationClientMock.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ acquired: false }] })
+      .mockResolvedValue({ rows: [] });
+    const { agent, run } = stubAgent();
 
-    // Comment carries proposed_status + previous_status + the loadable gateway sessionKey.
-    const insertCall = lastCommentInsert()!;
-    expect(insertCall[0]).toContain("'cloud_agent'");
-    expect(insertCall[0]).toContain("'gateway'"); // runtime = 'gateway' (migration 031)
-    expect(insertCall[1][2]).toBe('Rem Orchestrator'); // author_label
-    expect(insertCall[1][4]).toBe('completed'); // proposed_status
-    expect(insertCall[1][5]).toBe('pending'); // previous_status (Undo target)
-    // session_id is the gateway session key (rem-task-<id>), NOT a random runId (H2).
-    expect(insertCall[1][6]).toBe(taskSessionKey(TASK_ID));
+    const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
+
+    expect(result.status).toBe('skipped_claim');
+    expect(run).not.toHaveBeenCalled();
+    expect(poolMock.query).not.toHaveBeenCalled();
   });
 
   it('does NOT stamp previous_status when the agent re-affirms the current status (no-op)', async () => {
     poolMock.query
       .mockResolvedValueOnce({ rowCount: 1 }) // claim
       .mockResolvedValueOnce({ rows: [] }); // comments
-    // Agent proposes nothing (null) → no status change, no Undo affordance.
-    const { agent } = stubAgent({ ok: true, reply: 'Working on it.', proposedStatus: null });
+    // Re-affirming pending → no status change, no Undo affordance.
+    const { agent } = stubAgent({ ok: true, reply: 'Working on it.', proposedStatus: 'pending' });
 
     const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
 
     expect(result.status).toBe('executed');
     expect(result.appliedStatus).toBeNull();
 
-    const applyCall = lastTasksUpdateOnClient()!;
-    expect(applyCall[0]).not.toContain('status = $2'); // run_status only
-    expect(applyCall[1][0]).toBe('review'); // null proposal → 'review'
-
-    const insertCall = lastCommentInsert()!;
-    expect(insertCall[1][4]).toBeNull(); // proposed_status
-    expect(insertCall[1][5]).toBeNull(); // previous_status → no Undo
+    expect(executeStatusMock.mock.calls[0][0].productCompletion).toMatchObject({
+      runStatus: 'review', proposedStatus: 'pending', previousStatus: null,
+    });
   });
 
-  it('rolls back and releases the claim when the comment INSERT fails (C1 — no silent status mutation)', async () => {
+  it('propagates external-content provenance so automation policy can fail closed', async () => {
+    poolMock.query
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [] });
+    const { agent } = stubAgent({
+      ok: true,
+      reply: 'Prepared a draft from imported material.',
+      proposedStatus: 'completed',
+      externalContentInfluenced: true,
+    });
+    executeStatusMock.mockResolvedValueOnce({
+      kind: 'blocked',
+      reason: 'external_content_requires_user',
+      effectId: 'effect-external',
+      replayed: false,
+    });
+
+    const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
+
+    expect(executeStatusMock.mock.calls[0][0].externalContentInfluenced).toBe(true);
+    expect(result).toMatchObject({
+      status: 'skipped_runtime',
+      reason: 'external_content_requires_user',
+    });
+  });
+
+  it('does not mint a second identity when effect execution throws ambiguously', async () => {
     poolMock.query
       .mockResolvedValueOnce({ rowCount: 1 }) // claim
-      .mockResolvedValueOnce({ rows: [] }) // comments
-      .mockResolvedValueOnce({ rowCount: 1 }); // releaseClaim after rollback
-    // Client: BEGIN ok, UPDATE ok, INSERT throws (e.g. constraint), ROLLBACK ok.
-    clientMock.query.mockImplementation(async (sql: string) => {
-      if (typeof sql === 'string' && sql.includes('INSERT INTO task_comments')) {
-        throw new Error('violates check constraint "task_comments_runtime_check"');
-      }
-      return { rows: [], rowCount: 1 };
-    });
+      .mockResolvedValueOnce({ rows: [] }); // comments
+    executeStatusMock.mockRejectedValueOnce(new Error('commit acknowledgement lost'));
     const { agent } = stubAgent({ ok: true, reply: 'Did it.', proposedStatus: 'completed' });
 
     const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
 
-    // The whole apply is atomic — nothing applied, task released for retry.
-    expect(result.status).toBe('skipped_gateway');
-    expect(result.reason).toContain('task_comments_runtime_check');
-    expect(clientMock.query).toHaveBeenCalledWith('ROLLBACK');
-    // Claim released back to NULL (last pool.query is the release).
-    const releaseCall = poolMock.query.mock.calls.at(-1)!;
-    expect(releaseCall[0]).toContain('SET run_status = NULL');
+    expect(result.status).toBe('skipped_runtime');
+    expect(result.reason).toContain('commit acknowledgement lost');
+    expect(poolMock.query).toHaveBeenCalledTimes(2); // claim + comments; no immediate release
+  });
+
+  it('holds the task claim while an admitted effect is still pending', async () => {
+    poolMock.query.mockResolvedValueOnce({ rowCount: 1 }).mockResolvedValueOnce({ rows: [] });
+    executeStatusMock.mockResolvedValueOnce({ kind: 'not_applied', reason: 'effect_pending' });
+    const { agent } = stubAgent();
+
+    const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
+
+    expect(result).toMatchObject({ status: 'skipped_runtime', reason: 'effect_pending' });
+    expect(poolMock.query).toHaveBeenCalledTimes(2); // no immediate release / redispatch window
+  });
+
+  it('releases the task when policy rejection proves no mutation committed', async () => {
+    poolMock.query
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    executeStatusMock.mockResolvedValueOnce({ kind: 'not_applied', reason: 'effect_blocked' });
+    const { agent } = stubAgent();
+
+    const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
+
+    expect(result).toMatchObject({ status: 'skipped_runtime', reason: 'effect_blocked' });
+    expect(poolMock.query.mock.calls[2][0]).toContain('SET run_status = NULL');
   });
 });
 
 describe('runReadyTask — deny-list safety (never auto-runs a dangerous task)', () => {
-  it('records blocked-for-review in one transaction and never dispatches the gateway turn', async () => {
+  it('records blocked-for-review in one transaction and never dispatches the model turn', async () => {
     poolMock.query
       .mockResolvedValueOnce({ rowCount: 1 }) // claim
       .mockResolvedValueOnce({ rows: [] }); // comments
@@ -252,7 +393,7 @@ describe('runReadyTask — deny-list safety (never auto-runs a dangerous task)',
 
     expect(result.status).toBe('denied');
     expect(result.reason).toContain('send_communications');
-    expect(run).not.toHaveBeenCalled(); // gateway never touched
+    expect(run).not.toHaveBeenCalled(); // runtime never touched
 
     // Blocked flip + comment share a transaction.
     expect(clientMock.query.mock.calls[0][0]).toBe('BEGIN');
@@ -264,11 +405,52 @@ describe('runReadyTask — deny-list safety (never auto-runs a dangerous task)',
 
     // A deny IS a blocked run — the sweep's most common one — so it must carry a machine
     // reason and not only the 🚫 prose. `policy_blocked` is what tells run history apart from
-    // a dead gateway; without it, both surface as "blocked" with no code. Task row and comment
+    // a failed runtime; without it, both surface as "blocked" with no code. Task row and comment
     // row both, because the task holds only its last run's state.
     expect(updateCall[0]).toContain('run_block_code = $3');
     expect(updateCall[1][2]).toBe('policy_blocked');
     expect(insertCall[1][7]).toBe('policy_blocked');
+  });
+
+  it('releases instead of recording a denial when the observed task revision changed', async () => {
+    poolMock.query
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          title: 'Send an email to my landlord',
+          status: 'pending',
+          priority: 'high',
+          description: null,
+          updated_at: '2026-06-30T15:00:00.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ comments: [], comment_count: 0, chat_messages: [], chat_message_count: 0 }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    clientMock.query.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('SELECT updated_at')) {
+        return {
+          rows: [{
+            updated_at: '2026-06-30T15:01:00.000Z',
+            comment_count: 0,
+            chat_message_count: 0,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const { agent, run } = stubAgent();
+
+    const result = await runReadyTask(task({ title: 'Send an email to my landlord' }), NOW, { agent });
+
+    expect(result).toMatchObject({
+      status: 'skipped_runtime',
+      reason: 'error: task_observation_changed',
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(poolMock.query.mock.calls[2][0]).toContain('SET run_status = NULL');
+    expect(lastCommentInsert()).toBeUndefined();
   });
 
   it('CLEARS a stale block when the sweep completes a run the manual dispatch abandoned', async () => {
@@ -284,12 +466,12 @@ describe('runReadyTask — deny-list safety (never auto-runs a dangerous task)',
 
     await runReadyTask(task({}), NOW, { agent, screen: allowScreen });
 
-    const updateCall = lastTasksUpdateOnClient()!;
-    expect(updateCall[0]).toContain('run_block_code = NULL');
-    expect(updateCall[0]).toContain('run_block_mode = NULL');
+    expect(executeStatusMock.mock.calls[0][0].productCompletion).toMatchObject({
+      runBlockCode: null, runBlockMode: null,
+    });
   });
 
-  // The screen has to cover everything `buildSweepMessage` puts in the prompt. The
+  // The screen has to cover everything `runAgentOnTask` puts in the prompt. The
   // description (migration 120) is injected into the unattended turn, so a clean title
   // over a dangerous description used to sail straight past the deny list and be handed
   // to the agent as an instruction.
@@ -349,17 +531,34 @@ describe('runReadyTask — deny-list safety (never auto-runs a dangerous task)',
 });
 
 describe('runReadyTask — graceful degradation', () => {
-  it('releases the claim (run_status → NULL) and skips when the gateway is unavailable', async () => {
+  it('releases its claim when conversation context cannot be read before effect admission', async () => {
+    poolMock.query
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockRejectedValueOnce(new Error('context database unavailable'))
+      .mockResolvedValueOnce({ rowCount: 1 });
+    const { agent, run } = stubAgent();
+
+    const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
+
+    expect(result).toMatchObject({
+      status: 'skipped_runtime',
+      reason: 'error: context database unavailable',
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(poolMock.query.mock.calls[2][0]).toContain('SET run_status = NULL');
+  });
+
+  it('releases the claim (run_status → NULL) when the observe runtime fails before an effect', async () => {
     poolMock.query
       .mockResolvedValueOnce({ rowCount: 1 }) // claim
       .mockResolvedValueOnce({ rows: [] }) // comments
       .mockResolvedValueOnce({ rowCount: 1 }); // release
-    const { agent } = stubAgent({ ok: false, reason: 'no_gateway' });
+    const { agent } = stubAgent({ ok: false, reason: 'runtime_unavailable' });
 
     const result = await runReadyTask(task(), NOW, { agent, screen: allowScreen });
 
-    expect(result.status).toBe('skipped_gateway');
-    expect(result.reason).toBe('no_gateway');
+    expect(result.status).toBe('skipped_runtime');
+    expect(result.reason).toBe('runtime_unavailable');
     expect(result.commentId).toBeNull();
     expect(poolMock.connect).not.toHaveBeenCalled(); // no transaction on the failure path
 
@@ -450,7 +649,7 @@ describe('findReadyTasks', () => {
 });
 
 describe('sweepReadyTasks — batch isolation', () => {
-  it('reaps stale claims, isolates a per-task failure, and reports gateway/claim skips separately', async () => {
+  it('reaps stale claims, isolates a per-task failure, and reports runtime/claim skips separately', async () => {
     poolMock.query
       .mockResolvedValueOnce({ rowCount: 1 }) // reapStaleRunningClaims
       .mockResolvedValueOnce({
@@ -468,7 +667,13 @@ describe('sweepReadyTasks — batch isolation', () => {
 
     const run = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true, reply: 'done', proposedStatus: 'completed' })
+      .mockResolvedValueOnce({
+        ok: true,
+        reply: 'done',
+        proposedStatus: 'completed',
+        proposalRunId: 'proposal-run-1',
+        toolCallId: 'report-call-1',
+      })
       .mockResolvedValueOnce({ ok: false, reason: 'timeout' });
 
     const report = await sweepReadyTasks(NOW, {
@@ -480,7 +685,7 @@ describe('sweepReadyTasks — batch isolation', () => {
     expect(report.scanned).toBe(2);
     expect(report.executed).toBe(1);
     expect(report.skipped).toBe(1);
-    expect(report.skippedGateway).toBe(1);
+    expect(report.skippedRuntime).toBe(1);
     expect(report.skippedClaim).toBe(0);
   });
 });

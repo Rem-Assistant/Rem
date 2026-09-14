@@ -112,7 +112,7 @@ enum AutomationOutputsPresentation {
     /// An older server has no outputs route at all. Say that, rather than blaming the network.
     ///
     /// Lives here rather than on the view so a test can call it: the equivalent Inputs helpers sit
-    /// on a `private` view struct and are therefore unreachable from `RemClawTests`, which is why
+    /// on a `private` view struct and are therefore unreachable from `RemTests`, which is why
     /// the 404-vs-500 distinction has never been asserted.
     static func errorTitle(_ error: Error) -> String {
         isUnsupportedByServer(error) ? "Outputs need a server update" : "Couldn't load outputs"

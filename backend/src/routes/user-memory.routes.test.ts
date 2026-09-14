@@ -91,6 +91,9 @@ describe('user-memory routes', () => {
     expect(res.body).toMatchObject({ id: MEMORY_ID, fact: 'Prefers evening workouts' });
     const sql = poolMock.query.mock.calls[0][0] as string;
     expect(sql).toContain('UPDATE user_memory');
+    expect(sql).toContain("session_key LIKE 'rem-memory-%'");
+    expect(sql).toContain("state <> 'running'");
+    expect(sql).toContain("state = 'running'");
   });
 
   it('returns 404 updating a memory not owned by the user', async () => {
@@ -111,6 +114,10 @@ describe('user-memory routes', () => {
     poolMock.query.mockResolvedValueOnce({ rows: [{ id: MEMORY_ID }] });
     const res = await request(testApp()).delete(`/api/v1/memory/${MEMORY_ID}`);
     expect(res.status).toBe(204);
+    const sql = poolMock.query.mock.calls[0][0] as string;
+    expect(sql).toContain('purged_terminal_runtime_copies');
+    expect(sql).toContain('expiring_active_runtime_copies');
+    expect(sql).toContain("session_key LIKE 'rem-memory-%'");
   });
 
   it('delete of a missing memory returns 404', async () => {

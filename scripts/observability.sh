@@ -1,5 +1,5 @@
 #!/bin/bash
-# RemClaw Observability Agent Tools
+# Rem Observability Agent Tools
 # Provides log query and build metrics for AI agents
 set -euo pipefail
 
@@ -22,8 +22,8 @@ collect_build_metrics() {
 
   log "Collecting build metrics..."
 
-  xcodebuild -project "$PROJECT_ROOT/RemClaw.xcodeproj" \
-    -scheme RemClaw \
+  xcodebuild -project "$PROJECT_ROOT/Rem.xcodeproj" \
+    -scheme Rem \
     -configuration "$config" \
     -destination "$destination" \
     build 2>&1 | tee "$BUILD_LOG"
@@ -37,8 +37,8 @@ collect_test_metrics() {
 
   log "Collecting test metrics..."
 
-  xcodebuild -project "$PROJECT_ROOT/RemClaw.xcodeproj" \
-    -scheme RemClaw \
+  xcodebuild -project "$PROJECT_ROOT/Rem.xcodeproj" \
+    -scheme Rem \
     -configuration Debug \
     -destination "$destination" \
     test 2>&1 | tee "$TEST_LOG"
@@ -151,7 +151,7 @@ main() {
       build_timing "$@"
       ;;
     help|--help)
-      echo "RemClaw Observability Tools"
+      echo "Rem Observability Tools"
       echo ""
       echo "Commands:"
       echo "  collect-build [dest] [config]  - Build iOS app and save logs"

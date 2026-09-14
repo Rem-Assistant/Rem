@@ -1,7 +1,7 @@
 # Gateway Update Flow
 
 This note is the product and engineering contract for issue
-[#631](https://github.com/Rem-Assistant/RemClaw/issues/631). It defines how Rem
+[#631](https://github.com/Rem-Assistant/Rem/issues/631). It defines how Rem
 should safely move a user's existing gateway to a newer approved runtime when a
 feature needs a capability the gateway does not yet support.
 

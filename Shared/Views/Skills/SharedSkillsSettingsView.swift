@@ -1,5 +1,5 @@
 import SwiftUI
-import OpenClawKit
+import RemKit
 
 // MARK: - Shared Skills Settings View
 
@@ -728,7 +728,7 @@ private struct SharedSkillRequirementActionSheet<Gateway: GatewaySessionProvidin
                 Text(label)
                     .font(.callout)
 
-                Text("This setup runs on the active machine, not on this device. Rem asks OpenClaw to run the skill's selected manifest installer through its `skills.install` safety checks, keeps progress out of chat, and re-checks requirements after the install.")
+                Text("This setup runs on the active machine, not on this device. Rem asks the gateway to run the skill's selected manifest installer through its `skills.install` safety checks, keeps progress out of chat, and re-checks requirements after the install.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -815,7 +815,7 @@ private struct SharedSkillRequirementActionSheet<Gateway: GatewaySessionProvidin
             }
         case .openGatewayRecovery:
             NavigationLink {
-                SharedOpenClawGatewayHomeView(gateway: gateway)
+                SharedRemGatewayHomeView(gateway: gateway)
             } label: {
                 Label("Open Machine Setup", systemImage: "server.rack")
             }
@@ -824,7 +824,7 @@ private struct SharedSkillRequirementActionSheet<Gateway: GatewaySessionProvidin
                 .foregroundStyle(.secondary)
         case .manualGatewaySetup:
             NavigationLink {
-                SharedOpenClawGatewayHomeView(gateway: gateway)
+                SharedRemGatewayHomeView(gateway: gateway)
             } label: {
                 Label("Open Machine Setup", systemImage: "doc.badge.gearshape")
             }
@@ -889,7 +889,7 @@ private struct SharedSkillRequirementActionSheet<Gateway: GatewaySessionProvidin
         if case .succeeded = installState {
             return "Requirements were re-checked after the installer finished."
         }
-        return "If OpenClaw blocks the installer, Rem will show the failure here instead of streaming terminal output into chat."
+        return "If the gateway blocks the installer, Rem will show the failure here instead of streaming terminal output into chat."
     }
 
     private func installOnGateway(installId: String?, installerKind: String?) async {

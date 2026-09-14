@@ -6,7 +6,7 @@
 # is confirmed by looking, not by trusting a green unit test.
 #
 # It leans on the app's existing `--rem-<screen>-fixture` DEBUG launch args
-# (RemClawApp.swift): each renders one screen against canned data BEFORE the
+# (RemApp.swift): each renders one screen against canned data BEFORE the
 # sign-in gate, so no account, gateway, or network is needed.
 #
 # Batch by design: the build is ~80% of the cost, so we build ONCE and amortize
@@ -22,7 +22,7 @@
 #                VV_SLEEP (render wait seconds, default 4).
 set -euo pipefail
 
-SCHEME="RemClaw"
+SCHEME="Rem"
 BUNDLE_ID="com.remapp.rem"
 OUT="${VV_OUT:-visual-verify-out}"
 SIM="${VV_SIM:-iPhone 16}"
@@ -33,8 +33,8 @@ SLEEP="${VV_SLEEP:-4}"
 CORE=(task-detail suggestions settings connectors automations
       chat-lifecycle onboarding voice-settings model-picker gateway-detail)
 
-# Full set — MUST stay in sync with the `--rem-*-fixture` flags in RemClawApp.swift.
-# (Regenerate: git grep -oE '\-\-rem-[a-z-]+-fixture' RemClaw/RemClawApp.swift
+# Full set — MUST stay in sync with the `--rem-*-fixture` flags in RemApp.swift.
+# (Regenerate: git grep -oE '\-\-rem-[a-z-]+-fixture' Rem/RemApp.swift
 #              | sed -E 's/^--rem-(.*)-fixture$/\1/' | sort -u)
 ALL=(activity-history ai-data-sharing-consent automations browser-live-card
      chat-day-divider chat-diagnostics chat-diagnostics-row chat-lifecycle
@@ -51,11 +51,11 @@ elif [ "$1" = "all" ]; then FIXTURES=("${ALL[@]}")
 else FIXTURES=("$@"); fi
 
 command -v xcrun >/dev/null || { echo "error: xcrun not found (needs Xcode/macOS)" >&2; exit 2; }
-[ -e "RemClaw.xcodeproj" ] || { echo "error: run from the repo root (RemClaw.xcodeproj not here)" >&2; exit 2; }
+[ -e "Rem.xcodeproj" ] || { echo "error: run from the repo root (Rem.xcodeproj not here)" >&2; exit 2; }
 
 mkdir -p "$OUT"
 echo "==> Building $SCHEME (Debug, simulator) once…"
-xcodebuild -project RemClaw.xcodeproj -scheme "$SCHEME" \
+xcodebuild -project Rem.xcodeproj -scheme "$SCHEME" \
   -configuration Debug \
   -destination "generic/platform=iOS Simulator" \
   -derivedDataPath "$DERIVED" \

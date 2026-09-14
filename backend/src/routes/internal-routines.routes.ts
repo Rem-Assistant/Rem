@@ -2,8 +2,8 @@
  * internal-routines.routes — an inbound webhook that runs a single routine by id. This
  * was originally the gateway-cron → runRoutine bridge; routines are now BACKEND-scheduled
  * (src/scripts/run-routines.ts selects due routines and calls runRoutine in-process), so
- * this endpoint is NO LONGER the scheduled path. It is kept as a harmless manual /
- * programmatic trigger seam (e.g. "run this routine now"). On call, the handler loads the
+ * this endpoint is NO LONGER the primary scheduled path. It is retained only as a legacy
+ * scheduled compatibility seam because old gateway cron jobs may still call it. On call, it loads the
  * routine and invokes the existing `runRoutine` path — the SINGLE execution + governance
  * gate (model-gate + deny-list + attributed comment + RunReport + stampLastRun all live in
  * routine-runner.service.ts) — then returns the RunReport.
@@ -67,7 +67,7 @@ function authorizeWebhook(req: Request, res: Response): boolean {
 
 /**
  * POST /api/v1/internal/routines/:id/run — gateway cron webhook entrypoint. Runs the
- * routine now and returns the RunReport. The run itself never throws (every governance
+ * routine as scheduled work and returns the RunReport. The run itself never throws (every governance
  * path lands a status-feed comment), so a 200 here means the routine cycle completed.
  */
 router.post('/internal/routines/:id/run', async (req: Request, res: Response) => {
@@ -77,15 +77,8 @@ router.post('/internal/routines/:id/run', async (req: Request, res: Response) =>
     const routine = await getRoutineById(req.params.id);
     if (!routine) return res.status(404).json({ error: 'Routine not found' });
 
-    // Paused-routine guard: the gateway cron job is paused (enabled:false) when the
-    // routine is disabled, but a job that was already firing — or whose pause patch
-    // never reached the gateway (best-effort sync) — can still hit this webhook. The
-    // routine row is the source of truth, so mirror isDailyRoutineDue's enabled check
-    // and no-op: do NOT run the agent, write a comment, or stamp last_run_at.
-    if (!routine.enabled) {
-      return res.json({ skipped: 'disabled', routineId: routine.id });
-    }
-
+    // Legacy gateways can still invoke this secret-bearing cron seam, so it remains a scheduled
+    // dispatch. The runner's current enabled state and canonical occurrence fence apply.
     const result = await runRoutine(routine, new Date());
     return res.json(result);
   } catch (error: any) {

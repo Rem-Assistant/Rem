@@ -7,7 +7,7 @@
  * interface", and separately claimed it could "check notifications, location, camera, photos"
  * while photo access is not exposed at all. The structural fix is upstream of here: the agent's
  * capability and surface sentences are now GENERATED from the gateway's own state every session
- * (by the hosted gateway's runtime-facts hook, operated separately), so the prompt cannot carry a stale
+ * (deploy/openclaw-gateway/hooks/remclaw/runtime-facts.js), so the prompt cannot carry a stale
  * claim.
  *
  * That fix has exactly one way to lose: durable memory. A memory row saying "the user is on

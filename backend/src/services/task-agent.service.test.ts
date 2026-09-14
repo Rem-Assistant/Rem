@@ -1,5 +1,5 @@
 /**
- * `task-agent.service` — the run's own behaviour, with the gateway turn stubbed.
+ * `task-agent.service` — the run's own behaviour, with the Rem runtime stubbed.
  *
  * The end-to-end proof that a verdict survives the wire lives in
  * `task-verdict.roundtrip.test.ts`, which mocks only the socket. This file covers the
@@ -7,20 +7,14 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const runAgentTurnOnGatewayMock = vi.hoisted(() => vi.fn());
-vi.mock('./gateway-agent.service.js', () => ({
-  runAgentTurnOnGateway: runAgentTurnOnGatewayMock,
+const runAgentTurnMock = vi.hoisted(() => vi.fn());
+const runLegacyTurnMock = vi.hoisted(() => vi.fn());
+vi.mock('../runtime/agent-runtime.service.js', () => ({
+  runAgentTurnOnSharedRuntime: runAgentTurnMock,
+  runAgentTurn: runLegacyTurnMock,
 }));
 
-// Only the mode LOOKUP is stubbed; `blockCodeForGatewayFailure` stays real so the mapping this
-// service depends on is exercised here, not mocked away.
-const resolveModeMock = vi.hoisted(() => vi.fn());
-vi.mock('./run-block.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./run-block.js')>()),
-  resolveModelRuntimeMode: resolveModeMock,
-}));
-
-const { runAgentOnTask, resolveRunVerdict, buildUserPrompt, NO_GATEWAY_BODY } = await import(
+const { runAgentOnTask, resolveRunVerdict, buildUserPrompt, runtimeFailureBody, NO_RUNTIME_BODY } = await import(
   './task-agent.service.js'
 );
 const { TASK_VERDICT_ENVELOPE_ID, TASK_VERDICT_TOOL_NAME } = await import('./task-verdict.js');
@@ -35,21 +29,50 @@ const COMMENTS = [{ author_kind: 'user', author_label: 'Owner', body: 'where are
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resolveModeMock.mockResolvedValue('rem_managed');
-  runAgentTurnOnGatewayMock.mockResolvedValue({
+  runAgentTurnMock.mockResolvedValue({
     ok: true,
     text: 'Had a look.',
     runId: 'r1',
     sessionKey: 'rem-task-x',
     toolCalls: [],
+    provenance: provenance(),
+  });
+  runLegacyTurnMock.mockResolvedValue({
+    ok: true,
+    text: 'Legacy BYOK result.',
+    runId: 'legacy-1',
+    sessionKey: 'rem-task-x',
+    toolCalls: [],
+    provenance: {
+      runtimeId: 'openclaw_gateway',
+      persistenceKind: 'gateway',
+      billingMode: 'byok',
+    },
   });
 });
 
+function provenance(billingMode: 'rem_managed' | 'byok' | 'unknown' = 'rem_managed') {
+  return {
+    runtimeId: 'rem_shared' as const,
+    persistenceKind: 'rem_runtime' as const,
+    billingMode,
+  };
+}
+
+function authorizedOpts(userId: string, extra: Record<string, unknown> = {}) {
+  return {
+    userId,
+    authority: 'authenticated_user' as const,
+    idempotencyKey: `dispatch-${userId}`,
+    ...extra,
+  };
+}
+
 describe('the prompt asks for the verdict, once, in one shared form', () => {
   it('sends the verdict instruction naming both carriers', async () => {
-    await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+    await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
 
-    const message = runAgentTurnOnGatewayMock.mock.calls[0][0].message as string;
+    const message = runAgentTurnMock.mock.calls[0][0].message as string;
     expect(message).toContain(TASK_VERDICT_TOOL_NAME);
     expect(message).toContain(TASK_VERDICT_ENVELOPE_ID);
     // The retired instruction must not linger beside the new one — two contracts in one
@@ -66,38 +89,154 @@ describe('the prompt asks for the verdict, once, in one shared form', () => {
 });
 
 describe('runAgentOnTask routes to the owner, or does not run', () => {
+  it('forwards caller-established authority and idempotency with a reporting-only policy', async () => {
+    await runAgentOnTask(TASK, COMMENTS, undefined, {
+      userId: 'u9',
+      authority: 'authenticated_user',
+      idempotencyKey: 'dispatch-9',
+    });
+    expect(runAgentTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: { userId: 'u9', authority: 'authenticated_user' },
+      idempotencyKey: 'dispatch-9',
+      toolPolicy: {
+        mode: 'observe',
+        allowedTools: [TASK_VERDICT_TOOL_NAME],
+        approval: 'none',
+      },
+    }));
+  });
+
+  it('keeps an explicitly tool-bearing transitional caller on its existing adapter', async () => {
+    await runAgentOnTask(TASK, COMMENTS, undefined, {
+      ...authorizedOpts('u9'),
+      authority: 'trusted_automation',
+      toolPolicy: { mode: 'act', allowedTools: ['*'], approval: 'automation_policy' },
+    });
+
+    expect(runAgentTurnMock).not.toHaveBeenCalled();
+    expect(runLegacyTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: { userId: 'u9', authority: 'trusted_automation' },
+      toolPolicy: { mode: 'act', allowedTools: ['*'], approval: 'automation_policy' },
+    }));
+  });
+
   it('uses the caller-supplied session key so runs thread into one chat', async () => {
-    await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u9', sessionKey: 'rem-task-abc' });
-    expect(runAgentTurnOnGatewayMock).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'u9', sessionKey: 'rem-task-abc' }),
+    await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u9', { sessionKey: 'rem-task-abc' }));
+    expect(runAgentTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: { userId: 'u9', authority: 'authenticated_user' },
+        sessionKey: 'rem-task-abc',
+      }),
     );
   });
 
   it('derives a per-task session key when the caller supplied none', async () => {
-    await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u9' });
-    expect(runAgentTurnOnGatewayMock.mock.calls[0][0].sessionKey).toBe(`rem-task-${TASK.id}`);
+    await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u9'));
+    expect(runAgentTurnMock.mock.calls[0][0].sessionKey).toBe(`rem-task-${TASK.id}`);
   });
 
   it('returns an actionable, errored result — and starts no turn — without a userId', async () => {
     const result = await runAgentOnTask(TASK, COMMENTS);
-    expect(result.reply).toBe(NO_GATEWAY_BODY);
+    expect(result.reply).toBe(NO_RUNTIME_BODY);
     expect(result.errored).toBe(true);
     expect(result.verdictSource).toBe('none');
-    expect(runAgentTurnOnGatewayMock).not.toHaveBeenCalled();
+    expect(runAgentTurnMock).not.toHaveBeenCalled();
   });
 
-  it('IGNORES opts.model, because chat.send has no model parameter', async () => {
-    // Documented rather than silently dropped: a caller that still passes a routine's model
-    // (#808) must not be able to believe it took effect.
-    await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1', model: 'some-model' });
-    const sent = runAgentTurnOnGatewayMock.mock.calls[0][0];
-    expect(sent).not.toHaveProperty('model');
+  it('forwards model selection to the Rem-owned boundary', async () => {
+    await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1', { model: 'some-model' }));
+    const sent = runAgentTurnMock.mock.calls[0][0];
+    expect(sent.model).toBe('some-model');
   });
 
-  it('maps each gateway failure reason to an errored result with no verdict', async () => {
-    for (const reason of ['no_gateway', 'wake_failed', 'timeout', 'error'] as const) {
-      runAgentTurnOnGatewayMock.mockResolvedValueOnce({ ok: false, reason });
-      const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+  it('retains exact Rem report identity for the audited task-update proposal', async () => {
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: true,
+      text: '',
+      runId: 'runtime-run-1',
+      sessionKey: `rem-task-${TASK.id}`,
+      toolCalls: [{
+        name: TASK_VERDICT_TOOL_NAME,
+        toolCallId: 'report-call-1',
+        args: { status: 'completed', comment: 'The permit is renewed.' },
+      }],
+      provenance: provenance(),
+    });
+
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
+
+    expect(result.taskUpdateProposal).toEqual({
+      runtimeRunId: 'runtime-run-1', toolCallId: 'report-call-1',
+    });
+    expect(result.proposedStatus).toBe('completed');
+  });
+
+  it('does not turn a text envelope into Rem tool execution authority', async () => {
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: true,
+      text: `Done.\n${TASK_VERDICT_ENVELOPE_ID} {"status":"completed"}`,
+      runId: 'runtime-run-1',
+      sessionKey: `rem-task-${TASK.id}`,
+      toolCalls: [],
+      provenance: provenance(),
+    });
+
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
+
+    expect(result.proposedStatus).toBe('completed');
+    expect(result.taskUpdateProposal).toBeUndefined();
+  });
+
+  it('falls back to the transitional adapter only for a proven BYOK account', async () => {
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unavailable',
+      provenance: provenance('byok'),
+    });
+
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1', {
+      allowLegacyByokFallback: true,
+      legacyByokFallbackSessionKey: 'openclaw-manual-task-abc',
+    }));
+
+    expect(runLegacyTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: { userId: 'u1', authority: 'authenticated_user' },
+      sessionKey: 'openclaw-manual-task-abc',
+      toolPolicy: { mode: 'act', allowedTools: ['*'], approval: 'interactive_user' },
+    }));
+    expect(result.runtime?.persistenceKind).toBe('gateway');
+  });
+
+  it('does not enter the acting BYOK adapter unless the caller explicitly allows it', async () => {
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unavailable',
+      provenance: provenance('byok'),
+    });
+
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1', {
+      allowLegacyByokFallback: false,
+    }));
+
+    expect(runLegacyTurnMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      errored: true,
+      runBlock: { code: 'runtime_unavailable', mode: 'byok' },
+    });
+  });
+
+  it('maps each runtime failure reason to an errored result with no verdict', async () => {
+    for (const reason of [
+      'unavailable',
+      'startup_failed',
+      'quota_exhausted',
+      'credential_rejected',
+      'timeout',
+      'cancelled',
+      'error',
+    ] as const) {
+      runAgentTurnMock.mockResolvedValueOnce({ ok: false, reason, provenance: provenance() });
+      const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
       expect(result.errored, reason).toBe(true);
       expect(result.proposedStatus, reason).toBeUndefined();
       expect(result.verdictSource, reason).toBe('none');
@@ -105,8 +244,8 @@ describe('runAgentOnTask routes to the owner, or does not run', () => {
   });
 
   it('degrades rather than throwing when the turn helper throws unexpectedly', async () => {
-    runAgentTurnOnGatewayMock.mockRejectedValueOnce(new Error('socket exploded'));
-    const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+    runAgentTurnMock.mockRejectedValueOnce(new Error('socket exploded'));
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
     expect(result.errored).toBe(true);
     expect(result.verdictSource).toBe('none');
   });
@@ -119,69 +258,83 @@ describe('runAgentOnTask routes to the owner, or does not run', () => {
  * plus the mode, and a run that succeeded must carry neither.
  */
 describe('runBlock — the structured reason a run did not happen', () => {
-  it('carries a code AND the mode on every gateway failure reason', async () => {
+  it('carries a code AND the mode on every runtime failure reason', async () => {
     const expected = {
-      no_gateway: 'runtime_unavailable',
-      wake_failed: 'runtime_unavailable',
+      unavailable: 'runtime_unavailable',
+      startup_failed: 'runtime_unavailable',
+      quota_exhausted: 'quota_exhausted',
+      credential_rejected: 'credential_rejected',
       timeout: 'runtime_timeout',
+      cancelled: 'runtime_error',
       error: 'runtime_error',
     } as const;
     for (const [reason, code] of Object.entries(expected)) {
-      runAgentTurnOnGatewayMock.mockResolvedValueOnce({ ok: false, reason });
-      const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+      runAgentTurnMock.mockResolvedValueOnce({ ok: false, reason, provenance: provenance() });
+      const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
       expect(result.runBlock, reason).toEqual({ code, mode: 'rem_managed' });
     }
+  });
+
+  it('gives current clients actionable quota and credential recovery prose', () => {
+    expect(runtimeFailureBody('quota_exhausted')).toContain('Upgrade or wait');
+    expect(runtimeFailureBody('credential_rejected')).toContain('Rem’s model provider credential');
+    expect(runtimeFailureBody('credential_rejected')).not.toContain('Settings');
   });
 
   it('reports the BYOK mode so the client can say "fix your key", not "upgrade"', async () => {
     // The reason the mode travels WITH the code. `runtime_unavailable` on a Rem-managed account
     // and on a self-hosted one are the same failure with different owners; only the mode tells
     // the client which screen to send the user to.
-    resolveModeMock.mockResolvedValue('byok');
-    runAgentTurnOnGatewayMock.mockResolvedValueOnce({ ok: false, reason: 'wake_failed' });
-    const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'startup_failed',
+      provenance: provenance('byok'),
+    });
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
     expect(result.runBlock).toEqual({ code: 'runtime_unavailable', mode: 'byok' });
   });
 
   it('is ABSENT on a successful run, so "blocked" is never inferred from a stale field', async () => {
-    const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
     expect(result.errored).toBeFalsy();
     expect(result.runBlock).toBeUndefined();
   });
 
   it('reports mode unknown when there is no user to resolve a runtime for', async () => {
-    // Without a userId there is no gateway record and nothing to assert. `unknown` is the
+    // Without a userId there is no authenticated runtime principal. `unknown` is the
     // honest answer; claiming `rem_managed` here would tell a self-hosted user to buy Pro.
     const result = await runAgentOnTask(TASK, COMMENTS);
     expect(result.runBlock).toEqual({ code: 'runtime_unavailable', mode: 'unknown' });
-    expect(resolveModeMock).not.toHaveBeenCalled();
   });
 
   it('still produces a block when the turn helper throws', async () => {
-    runAgentTurnOnGatewayMock.mockRejectedValueOnce(new Error('socket exploded'));
-    const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
-    expect(result.runBlock).toEqual({ code: 'runtime_error', mode: 'rem_managed' });
+    runAgentTurnMock.mockRejectedValueOnce(new Error('socket exploded'));
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
+    expect(result.runBlock).toEqual({ code: 'runtime_error', mode: 'unknown' });
   });
 
   it('keeps the CODE when the mode resolves to unknown, rather than dropping the reason', async () => {
     // A degraded mode must not cost the client the diagnosis too. `resolveModelRuntimeMode`
-    // returns `unknown` both for "no gateway on record" and for a lookup that failed (it never
+    // returns `unknown` when payer ownership cannot be resolved (it never
     // throws), and in either case the code still has to arrive — otherwise a DB hiccup during a
     // timeout would surface as a blocked run with no reason at all.
-    resolveModeMock.mockResolvedValue('unknown');
-    runAgentTurnOnGatewayMock.mockResolvedValueOnce({ ok: false, reason: 'timeout' });
-    const result = await runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' });
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'timeout',
+      provenance: provenance('unknown'),
+    });
+    const result = await runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'));
     expect(result.runBlock).toEqual({ code: 'runtime_timeout', mode: 'unknown' });
   });
 
-  it('does not let a THROWN mode lookup take the run down with it', async () => {
-    // The version of the above that actually fails the lookup. `runAgentOnTask` awaits the
-    // resolver inside its own error path, so a rejection here would escape as an unhandled
-    // rejection from a route that is contractually never-throws.
-    resolveModeMock.mockRejectedValue(new Error('pool exhausted'));
-    runAgentTurnOnGatewayMock.mockResolvedValueOnce({ ok: false, reason: 'timeout' });
-    await expect(runAgentOnTask(TASK, COMMENTS, undefined, { userId: 'u1' })).resolves.toMatchObject({
-      errored: true,
+  it('uses the runtime result as the single source of billing mode', async () => {
+    runAgentTurnMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'timeout',
+      provenance: provenance('unknown'),
+    });
+    await expect(runAgentOnTask(TASK, COMMENTS, undefined, authorizedOpts('u1'))).resolves.toMatchObject({
+      runBlock: { code: 'runtime_timeout', mode: 'unknown' },
     });
   });
 });
@@ -192,6 +345,36 @@ describe('resolveRunVerdict precedence', () => {
       text: `Done.\n${TASK_VERDICT_ENVELOPE_ID} {"status":"blocked"}`,
       toolCalls: [{ name: TASK_VERDICT_TOOL_NAME, args: { status: 'completed' } }],
     });
+    expect(resolved.proposedStatus).toBe('completed');
+    expect(resolved.verdictSource).toBe('tool_call');
+  });
+
+  it('uses the report comment for a tool-only actionable reply', () => {
+    const resolved = resolveRunVerdict({
+      text: '',
+      toolCalls: [{
+        name: TASK_VERDICT_TOOL_NAME,
+        args: { status: 'completed', comment: 'The permit is renewed.' },
+      }],
+    });
+    expect(resolved.reply).toBe('The permit is renewed.');
+    expect(resolved.proposedStatus).toBe('completed');
+    expect(resolved.verdictSource).toBe('tool_call');
+  });
+
+  it('strips a conflicting machine marker embedded in the report comment', () => {
+    const resolved = resolveRunVerdict({
+      text: '',
+      toolCalls: [{
+        name: TASK_VERDICT_TOOL_NAME,
+        args: {
+          status: 'completed',
+          comment: `The permit is renewed.\n${TASK_VERDICT_ENVELOPE_ID} {"status":"blocked"}`,
+        },
+      }],
+    });
+    expect(resolved.reply).toBe('The permit is renewed.');
+    expect(resolved.reply).not.toContain(TASK_VERDICT_ENVELOPE_ID);
     expect(resolved.proposedStatus).toBe('completed');
     expect(resolved.verdictSource).toBe('tool_call');
   });

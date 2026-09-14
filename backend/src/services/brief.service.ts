@@ -299,7 +299,8 @@ export async function gatherBrief(
         AND type = 'task'
         AND (status IN ('pending', 'in_progress') OR run_status = 'blocked')
       ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC,
-               start_date ASC NULLS LAST
+               start_date ASC NULLS LAST,
+               id ASC
       LIMIT 200`,
     [userId],
   );
@@ -343,7 +344,7 @@ export async function gatherBrief(
         AND type = 'calendar_event'
         AND start_date >= $2::timestamptz
         AND start_date < $3::timestamptz
-      ORDER BY start_date ASC
+      ORDER BY start_date ASC, id ASC
       LIMIT $4`,
     [userId, startIso, endIso, BUCKET_LIMIT],
   );
@@ -359,7 +360,7 @@ export async function gatherBrief(
         AND status = 'completed'
         AND updated_at >= $2::timestamptz
         AND updated_at < $3::timestamptz
-      ORDER BY updated_at DESC
+      ORDER BY updated_at DESC, id ASC
       LIMIT $4`,
     [userId, startIso, endIso, BUCKET_LIMIT],
   );
@@ -384,7 +385,7 @@ export async function gatherBrief(
         WHERE user_id = $1::uuid
           AND task_id = ANY($2::uuid[])
           AND author_kind <> 'user'
-        ORDER BY task_id, created_at DESC`,
+        ORDER BY task_id, created_at DESC, id DESC`,
       [userId, itemIds],
     );
     const byTask = new Map<string, BriefActivity>();

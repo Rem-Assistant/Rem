@@ -10,9 +10,7 @@ const flyServiceMock = vi.hoisted(() => ({
 
 vi.mock('./gateway-lifecycle-lock.service.js', () => lifecycleLockMock);
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
-vi.mock('./gateway/hosted-provisioning.js', () => ({
-  getHostedGatewayProvisioning: () => flyServiceMock,
-}));
+vi.mock('./fly.service.js', () => flyServiceMock);
 vi.mock('../config/env.js', () => ({
   env: { GATEWAY_ENCRYPTION_KEY: 'test-encryption-key' },
 }));

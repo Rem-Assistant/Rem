@@ -26,7 +26,7 @@ enum AutomationInputsPresentation {
         case .remTasks: return "Rem tasks"
         case .remCalendarItems: return "Calendar items in Rem"
         case .connector: return row.connector?.displayName ?? "App connector"
-        case .cloudBrowser: return "Cloud browser"
+        case .cloudBrowser: return "Rem can use the web to do things for you"
         case let .unrecognized(raw):
             // A capability family this build has never heard of. Prefer the server's own display
             // name; otherwise show its code humanized rather than inventing a friendly label.

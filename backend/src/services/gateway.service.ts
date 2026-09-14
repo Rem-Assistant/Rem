@@ -6,7 +6,6 @@ import { pool } from '../db/pool.js';
 import { env } from '../config/env.js';
 import { resolveGatewayUpdateReadiness, type GatewayUpdateReadiness } from './gateway-update.service.js';
 import { tryWithUserGatewayLifecycleLock } from './gateway-lifecycle-lock.service.js';
-import { getHostedGatewayProvisioning } from './gateway/hosted-provisioning.js';
 
 const ALG = 'aes-256-gcm';
 const IV_LEN = 12;
@@ -449,7 +448,7 @@ async function prepareGatewayWakeFromRow(
     };
   }
 
-  const flyService = getHostedGatewayProvisioning();
+  const flyService = await import('./fly.service.js');
   const wakeSignal = AbortSignal.timeout(GATEWAY_WAKE_FLY_LOCK_TIMEOUT_MS);
   const machine = await flyService.getMachine(row.fly_app_name, row.fly_machine_id, {
     signal: wakeSignal,
@@ -480,7 +479,7 @@ async function prepareGatewayWakeFromRow(
 }
 
 async function finishPreparedFlyWake(prepared: PreparedFlyWake): Promise<GatewayWakeResult> {
-  const flyService = getHostedGatewayProvisioning();
+  const flyService = await import('./fly.service.js');
   if (prepared.initialState !== 'started') {
     try {
       await flyService.waitForMachineReady(prepared.appName, prepared.machineId, 25);
@@ -582,7 +581,8 @@ export async function getSetupPasswordWithClient(
   const row = r.rows[0];
   if (!row?.fly_app_name || !row?.fly_machine_id) return undefined;
   try {
-    const flyService = getHostedGatewayProvisioning();
+    // Dynamic import to avoid circular dependency
+    const flyService = await import('./fly.service.js');
     const machine = await flyService.getMachine(row.fly_app_name, row.fly_machine_id);
     return machine.config?.env?.SETUP_PASSWORD;
   } catch {

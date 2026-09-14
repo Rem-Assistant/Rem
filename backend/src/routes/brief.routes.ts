@@ -50,7 +50,7 @@ async function buildBriefResponse(
     authored = await readAuthoredBriefDelivery(userId, briefDate, conversationKey, db)
       .catch(() => null);
   }
-  if (authored?.delivered) {
+  if (authored) {
     brief.markdown = authored.markdown;
     // Never pair canonical markdown/session authority with gatherBrief's deterministic summary.
     // The authored reader derives a lead when possible; an empty value is safer than presenting
@@ -60,9 +60,12 @@ async function buildBriefResponse(
     // string; neither synthesizes its own from prose or the clock. Null when the artifact has no
     // authored headline — clients then fall back to their prior titles.
     brief.headline = authored.headline;
-    brief.brief_session_key = conversationKey;
     authoredRevision = authored.revision;
+    // The card is a Rem-owned read surface and does not depend on gateway delivery. Conversation
+    // continuity remains gated by proof that this exact revision reached the gateway transcript.
+    if (authored.delivered) brief.brief_session_key = conversationKey;
   }
+  Object.assign(brief, { is_authored: authored !== null });
 
   if (atomicSuggestions) {
     const suggestions = await deriveSuggestions(userId, now, timezone, db);
@@ -106,11 +109,11 @@ async function buildBriefResponse(
  * completed_today) plus a `counts` summary for the agenda card's progress ring.
  * Idempotent read — the counts/buckets are derived live from the tasks table.
  *
- * When an authored Daily Brief has already been delivered, the brief is a regenerating ARTIFACT
+ * When an authored Daily Brief exists, the brief is a regenerating ARTIFACT
  * the user can DISCUSS: the full-brief `markdown` (the card) and one-line `summary` are overridden
- * with what the user's gateway agent AUTHORED for today (cached in `daily_briefs`, migration 033).
+ * with what Rem AUTHORED for today (cached in `daily_briefs`, migration 033).
  * `BRIEF_AI_AUTHORING_ENABLED` gates creation of future artifacts, never reads of an existing
- * delivery. Clients receive a transcript key only after that exact artifact is visibly delivered.
+ * artifact. Clients receive a transcript key only after that exact artifact is visibly delivered.
  * Continuity-capable clients independently know that Summary opens the durable `rem-orchestrator`
  * doorway, so withholding the key prevents premature reconciliation without reviving a second
  * detail surface. The cache row remains

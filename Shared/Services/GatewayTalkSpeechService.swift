@@ -1,6 +1,6 @@
 import Foundation
-import OpenClawKit
-import OpenClawProtocol
+import RemKit
+import RemProtocol
 
 protocol GatewayTalkSpeechRequesting: Sendable {
     func request(method: String, paramsJSON: String?, timeoutSeconds: Int) async throws -> Data

@@ -1,5 +1,5 @@
 import Foundation
-import OpenClawKit
+import RemKit
 
 /// Pure decisions shared by the iOS and macOS next-sentence TTS prefetch pipelines.
 ///

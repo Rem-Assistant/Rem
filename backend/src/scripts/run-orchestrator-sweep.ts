@@ -1,7 +1,7 @@
 /**
  * run-orchestrator-sweep — the "brief that ACTS" sweep (#922). Finds tasks that are
- * READY TO RUN and runs each one AUTONOMOUSLY through the owner's OpenClaw gateway
- * (Move-2), applying status + leaving an Undo-able Activity comment. The brief/check-in
+ * READY TO RUN and runs each one AUTONOMOUSLY through Rem's hosted observe runtime,
+ * applying its policy-approved `tasks.update` + leaving an Undo-able Activity comment.
  * that reads `task_comments` then reports what Rem did with no extra wiring.
  *
  * OFF BY DEFAULT (M5): fleet-wide autonomous, side-effecting execution only runs when the
@@ -14,13 +14,13 @@
  * actions the sweep just took.
  *
  * Idempotent across ticks: `findReadyTasks` only picks tasks with `run_status IS NULL`
- * and each run stamps a terminal run_status (or, on gateway failure, releases the claim
+ * and each run stamps a terminal run_status (or, on a safe runtime failure, releases the claim
  * back to NULL to retry later) — so re-running within the interval never double-acts. A
  * claim stranded 'running' by a crashed tick is reaped back to NULL at the top of the
  * next sweep, so a mid-run crash can't strand a task forever.
  *
- * Never-throw per task: sweepReadyTasks isolates each task; a flaky/sleeping gateway
- * degrades to a skip (claim released), never crashing the cron. Mirrors run-routines.ts.
+ * Never-throw per task: sweepReadyTasks isolates each task; a provider/runtime failure
+ * degrades to a skip, never crashing the cron. Mirrors run-routines.ts.
  */
 
 import { fileURLToPath } from 'node:url';
@@ -41,13 +41,13 @@ async function main() {
   console.log(
     `[sweep] done — scanned=${report.scanned} executed=${report.executed} ` +
       `denied=${report.denied} skipped=${report.skipped} ` +
-      `(gateway=${report.skippedGateway} claim=${report.skippedClaim}) reaped=${report.reaped}`,
+      `(runtime=${report.skippedRuntime} claim=${report.skippedClaim}) reaped=${report.reaped}`,
   );
   // Exit non-zero only if we scanned tasks but every one failed to RUN — matches the
   // other cron scripts' "surface a total failure, tolerate partials" convention. Pure
   // claim contention (skipped_claim) is NOT a failure — another worker got there first —
   // so it is excluded from the failure count (L8).
-  const totalFailed = report.skippedGateway;
+  const totalFailed = report.skippedRuntime;
   process.exit(report.scanned > 0 && report.executed === 0 && report.denied === 0 && totalFailed > 0 ? 1 : 0);
 }
 

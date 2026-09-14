@@ -4,9 +4,8 @@ const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db/pool.js', () => ({ pool: poolMock }));
 
 const runAgentTurnMock = vi.hoisted(() => vi.fn());
-vi.mock('./gateway-agent.service.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./gateway-agent.service.js')>()),
-  runAgentTurnOnGateway: runAgentTurnMock,
+vi.mock('../runtime/agent-runtime.service.js', () => ({
+  runAgentTurnOnSharedRuntime: runAgentTurnMock,
 }));
 
 import { extractNovelFactsForUser } from './memory-extraction.service.js';
@@ -34,19 +33,11 @@ beforeEach(() => {
   delete process.env.GMI_API_KEY;
 });
 
-describe('extractNovelFactsForUser — one runtime, the user own gateway', () => {
-  it('NEVER spends the operator key when the gateway fails, even with GMI configured and healthy', async () => {
-    // THE REGRESSION. Extraction used to fall through to `gmiChat` on the org GMI_API_KEY when
-    // the user's own gateway could not take the turn. For a user whose runtime is their own,
-    // that wrote facts into their DURABLE memory that Rem paid a different provider to infer —
-    // silently, on any transient wake failure. BYOK is a global per-user mode; #1327 removed the
-    // identical fallback from task runs and this finishes the job.
-    //
-    // Setup is the friendliest possible case for the old behaviour: org key present, and a GMI
-    // call that would have returned a usable fact. Restoring the fallback turns this red twice.
+describe('extractNovelFactsForUser — Rem-owned runtime', () => {
+  it('does not bypass the Rem runtime with an unmetered direct provider call', async () => {
     process.env.GMI_API_KEY = 'k';
     mockActivity();
-    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'wake_failed' });
+    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'unavailable' });
     const fetchSpy = vi.fn(async () => ({
       ok: true,
       json: async () => ({ choices: [{ message: { content: '- Prefers mornings for deep work' } }] }),
@@ -59,19 +50,18 @@ describe('extractNovelFactsForUser — one runtime, the user own gateway', () =>
     expect(facts).toEqual([]);
   });
 
-  it('extracts nothing rather than throwing when there is no gateway at all', async () => {
+  it('extracts nothing rather than throwing when the Rem runtime is unavailable', async () => {
     // `extract-memories.ts` counts a throw as a `failed` user and exits non-zero, which marks the
     // whole 15-minute cron run failed. A gateway-less user is not a failure, so this path has to
     // return [] — which is also why the script's GmiEmptyCompletionError branch could be deleted:
     // the condition it classified now resolves inside the service.
     mockActivity();
-    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'no_gateway' });
+    runAgentTurnMock.mockResolvedValue({ ok: false, reason: 'unavailable' });
 
     await expect(extractNovelFactsForUser(USER_ID, NOW, [])).resolves.toEqual([]);
   });
 
-  it('still extracts from the gateway turn when it succeeds', async () => {
-    // Removing the fallback must not remove the feature.
+  it('extracts through a tenant-scoped, tool-free Rem runtime turn', async () => {
     mockActivity();
     runAgentTurnMock.mockResolvedValue({
       ok: true,
@@ -85,9 +75,21 @@ describe('extractNovelFactsForUser — one runtime, the user own gateway', () =>
 
     expect(facts).toEqual(['Prefers mornings for deep work']);
     expect(runAgentTurnMock).toHaveBeenCalledTimes(1);
+    expect(runAgentTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: { userId: USER_ID, authority: 'internal_service' },
+      sessionKey: 'rem-memory-20260626',
+      idempotencyKey: expect.stringMatching(/^rem-memory:[a-f0-9-]{36}$/),
+      toolPolicy: { mode: 'observe', allowedTools: [], approval: 'none' },
+    }));
   });
 
-  it('treats an empty gateway reply as "no durable facts", not an error', async () => {
+  it('returns no facts when loading the shared runtime rejects', async () => {
+    mockActivity();
+    runAgentTurnMock.mockRejectedValue(new Error('module unavailable'));
+    await expect(extractNovelFactsForUser(USER_ID, NOW, [])).resolves.toEqual([]);
+  });
+
+  it('treats an empty runtime reply as "no durable facts", not an error', async () => {
     // What #906 bought with a catch clause is now structural: an empty turn parses to [].
     mockActivity();
     runAgentTurnMock.mockResolvedValue({

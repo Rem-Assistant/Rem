@@ -1,6 +1,6 @@
 //
 //  GuidedFlow.swift
-//  RemClaw (Shared)
+//  Rem (Shared)
 //
 //  A reusable spotlight coach-mark engine: a dimmed scrim with a spotlight
 //  cutout over a real UI control, plus a Step X/Y tooltip bubble with Skip/Next.
@@ -15,14 +15,14 @@
 //  a separate design task. A `#if DEBUG` fixture at the bottom proves the engine
 //  renders (scrim + cutout + Next/Skip bubble) so it can be driven on a sim.
 //
-//  Lives in `Shared/Views/` so both the iOS (`RemClaw`) and macOS (`RemClawMac`)
+//  Lives in `Shared/Views/` so both the iOS (`Rem`) and macOS (`RemMac`)
 //  targets compile it — it is generic UI infrastructure with no platform-specific
 //  dependencies. Colors and typography come from `DesignTokens`, never a
 //  hardcoded palette.
 //
 //  ── Attribution ─────────────────────────────────────────────────────────────
 //  Ported from the founder's own Munch project (`Munch/GuidedFlow.swift`). Munch
-//  ships under the BSD 3-Clause License, which differs from RemClaw's Apache-2.0;
+//  ships under the BSD 3-Clause License, which differs from Rem's Apache-2.0;
 //  BSD 3-Clause condition (1) requires the copyright notice, conditions, and
 //  disclaimer to travel with redistributed source, so they are reproduced here:
 //
@@ -400,7 +400,7 @@ private extension View {
 /// Standalone demo that proves the engine renders end to end: a dimmed scrim, a
 /// spotlight cutout around one anchored control, and a Step X/Y tooltip bubble
 /// with Skip/Next. This is a FIXTURE, not real onboarding — reached via the
-/// `--rem-guided-flow-fixture` launch arg (see `RemClaw/RemClawApp.swift`) so it
+/// `--rem-guided-flow-fixture` launch arg (see `Rem/RemApp.swift`) so it
 /// can be driven on a simulator past the auth gate. Presenting the flow through
 /// the `enabled` flip (rather than the seen-ledger) makes it re-show on every
 /// launch regardless of persisted state.

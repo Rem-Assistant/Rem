@@ -1,15 +1,15 @@
 import Foundation
 import SwiftUI
-import OpenClawChatUI
-import OpenClawKit
-import OpenClawProtocol
+import RemChatUI
+import RemKit
+import RemProtocol
 
 #if DEBUG
 /// Auth-free model-picker proof. Automatic remains the default, the one supported managed
 /// MiniMax model is available without exposing managed-provider siblings, and the authenticated
 /// Anthropic provider expands into its explicit model choices through a nested submenu.
 struct ModelPickerFixtureView: View {
-    @State private var viewModel = OpenClawChatViewModel(
+    @State private var viewModel = RemChatViewModel(
         sessionKey: ModelPickerFixtureTransport.sessionKey,
         transport: ModelPickerFixtureTransport(),
         initialThinkingLevel: "low")
@@ -29,11 +29,11 @@ struct ModelPickerFixtureView: View {
     }
 }
 
-private final class ModelPickerFixtureTransport: @unchecked Sendable, OpenClawChatTransport {
+private final class ModelPickerFixtureTransport: @unchecked Sendable, RemChatTransport {
     static let sessionKey = "fixture-model-picker"
 
-    func requestHistory(sessionKey: String) async throws -> OpenClawChatHistoryPayload {
-        try Self.decode(OpenClawChatHistoryPayload.self, from: [
+    func requestHistory(sessionKey: String) async throws -> RemChatHistoryPayload {
+        try Self.decode(RemChatHistoryPayload.self, from: [
             "sessionKey": sessionKey,
             "sessionId": "fixture-model-picker-id",
             "thinkingLevel": "low",
@@ -41,19 +41,19 @@ private final class ModelPickerFixtureTransport: @unchecked Sendable, OpenClawCh
         ])
     }
 
-    func listModels() async throws -> [OpenClawChatModelChoice] {
+    func listModels() async throws -> [RemChatModelChoice] {
         [
-            OpenClawChatModelChoice(
+            RemChatModelChoice(
                 modelID: "MiniMaxAI/MiniMax-M2.7",
                 name: "MiniMax M2.7",
                 provider: "gmi",
                 contextWindow: 196_608),
-            OpenClawChatModelChoice(
+            RemChatModelChoice(
                 modelID: "SomeOtherManagedModel",
                 name: "Some Other Managed Model",
                 provider: "gmi",
                 contextWindow: 32_000),
-            OpenClawChatModelChoice(
+            RemChatModelChoice(
                 modelID: "claude-sonnet-4-5",
                 name: "Claude Sonnet 4.5",
                 provider: "anthropic",
@@ -61,12 +61,12 @@ private final class ModelPickerFixtureTransport: @unchecked Sendable, OpenClawCh
         ]
     }
 
-    func listSessions(limit _: Int?) async throws -> OpenClawChatSessionsListResponse {
-        OpenClawChatSessionsListResponse(
+    func listSessions(limit _: Int?) async throws -> RemChatSessionsListResponse {
+        RemChatSessionsListResponse(
             ts: Date().timeIntervalSince1970 * 1000,
             path: nil,
             count: 0,
-            defaults: OpenClawChatSessionsDefaults(
+            defaults: RemChatSessionsDefaults(
                 modelProvider: "gmi",
                 model: "MiniMaxAI/MiniMax-M2.7",
                 contextTokens: 196_608,
@@ -82,9 +82,9 @@ private final class ModelPickerFixtureTransport: @unchecked Sendable, OpenClawCh
         message _: String,
         thinking _: String,
         idempotencyKey _: String,
-        attachments _: [OpenClawChatAttachmentPayload]
-    ) async throws -> OpenClawChatSendResponse {
-        try Self.decode(OpenClawChatSendResponse.self, from: [
+        attachments _: [RemChatAttachmentPayload]
+    ) async throws -> RemChatSendResponse {
+        try Self.decode(RemChatSendResponse.self, from: [
             "runId": "fixture-run",
             "status": "complete",
         ])
@@ -94,7 +94,7 @@ private final class ModelPickerFixtureTransport: @unchecked Sendable, OpenClawCh
     func setSessionModel(sessionKey _: String, model _: String?) async throws {}
     func setSessionThinking(sessionKey _: String, thinkingLevel _: String) async throws {}
     func requestHealth(timeoutMs _: Int) async throws -> Bool { true }
-    func events() -> AsyncStream<OpenClawChatTransportEvent> { AsyncStream { $0.finish() } }
+    func events() -> AsyncStream<RemChatTransportEvent> { AsyncStream { $0.finish() } }
     func setActiveSessionKey(_: String) async throws {}
     func resetSession(sessionKey _: String) async throws {}
     func compactSession(sessionKey _: String) async throws {}

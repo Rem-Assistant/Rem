@@ -16,6 +16,8 @@ plain language before agents optimize individual features.
 | [SESSION_PREVIEW_CONTRACT.md](SESSION_PREVIEW_CONTRACT.md) | Product and security contract for in-app session preview: activity feed first, visual preview only after explicit consent and action logs. |
 | [LOCAL_MODEL_STRATEGY.md](LOCAL_MODEL_STRATEGY.md) | Recommendation for free/local model support, BYOK, and the paid cloud gateway boundary. |
 | [TYPOGRAPHY_AUDIT.md](TYPOGRAPHY_AUDIT.md) | Shared typography scale and chat/settings consistency audit for iOS and Mac surfaces. |
+| [RELAUNCH_DOGFOOD.md](RELAUNCH_DOGFOOD.md) | App Store relaunch E2E flow checklist: iOS, Mac, gateway, visual evidence, blockers, and future-facing product tracks. |
+| [AI_ORCHESTRATION_CASE_STUDY.md](AI_ORCHESTRATION_CASE_STUDY.md) | Working brief and outline for a future public case study on building Rem with AI orchestration. |
 
 ## Product Feedback Intake
 

@@ -1,8 +1,8 @@
 # Session Preview Contract
 
 This note is the product and security contract for issue
-[#729](https://github.com/Rem-Assistant/RemClaw/issues/729). It narrows the
-future direction in [#495](https://github.com/Rem-Assistant/RemClaw/issues/495)
+[#729](https://github.com/Rem-Assistant/Rem/issues/729). It narrows the
+future direction in [#495](https://github.com/Rem-Assistant/Rem/issues/495)
 into rules for showing what Rem is doing during remote-control or Mac-local
 sessions.
 
@@ -134,9 +134,9 @@ specific unavailable state instead of implying the cloud can inspect the Mac.
 
 ## Related Issues
 
-- [#495](https://github.com/Rem-Assistant/RemClaw/issues/495): Explore in-app
+- [#495](https://github.com/Rem-Assistant/Rem/issues/495): Explore in-app
   machine preview for remote control sessions.
-- [#730](https://github.com/Rem-Assistant/RemClaw/issues/730): Wire session
+- [#730](https://github.com/Rem-Assistant/Rem/issues/730): Wire session
   preview data feed from OpenClaw/Mac capabilities.
-- [#731](https://github.com/Rem-Assistant/RemClaw/issues/731): Design and
+- [#731](https://github.com/Rem-Assistant/Rem/issues/731): Design and
   visually validate in-app session preview surface.

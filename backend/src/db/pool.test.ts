@@ -4,10 +4,18 @@ vi.mock('../config/env.js', () => ({
   env: { DATABASE_URL: 'postgresql://test:test@localhost:5432/remclaw_test' },
 }));
 
-const { DATABASE_CONNECTION_TIMEOUT_MS, createDedicatedDatabaseClient, pool } = await import('./pool.js');
+const {
+  DATABASE_CONNECTION_TIMEOUT_MS,
+  createDedicatedDatabaseClient,
+  pool,
+  routinePolicyLockPool,
+  taskConversationPool,
+} = await import('./pool.js');
 
 afterAll(async () => {
   await pool.end();
+  await taskConversationPool.end();
+  await routinePolicyLockPool.end();
 });
 
 describe('shared PostgreSQL pool', () => {
@@ -25,5 +33,17 @@ describe('shared PostgreSQL pool', () => {
       DATABASE_CONNECTION_TIMEOUT_MS / 1_000,
     );
     expect(connectionParameters.keepalives).toBe(1);
+  });
+
+  it('isolates long task turns behind a small bounded pool', () => {
+    expect(taskConversationPool.options.max).toBe(8);
+    expect(taskConversationPool.options.connectionTimeoutMillis).toBe(DATABASE_CONNECTION_TIMEOUT_MS);
+  });
+
+  it('isolates long routine policy locks from ordinary queries', () => {
+    expect(routinePolicyLockPool).not.toBe(pool);
+    expect(routinePolicyLockPool.options.max).toBe(8);
+    expect(routinePolicyLockPool.options.connectionTimeoutMillis)
+      .toBe(DATABASE_CONNECTION_TIMEOUT_MS);
   });
 });

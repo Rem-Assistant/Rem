@@ -41,7 +41,7 @@ enum BackgroundSessionFilter {
     /// `rem-signal-triage-` is the background relevance classifier. The backend deletes each of its
     /// sessions after the turn; this entry is the SECOND line, covering runs where the delete could
     /// not be delivered, plus the ones already on gateways from before that fix. Measured on
-    /// remclaw-00000000 before it: 24 openable triage chats, each holding the user's open task
+    /// remclaw-f6e34084 before it: 24 openable triage chats, each holding the user's open task
     /// titles and every sender and subject in that tick's batch.
     static let hiddenPrefixes = [
         "rem-memory-",

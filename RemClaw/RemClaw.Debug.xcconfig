@@ -1,3 +1,0 @@
-// RemClaw Debug Configuration
-// Local env values live in .env.Debug.xcconfig.
-#include ".env.Debug.xcconfig"

@@ -8,7 +8,6 @@ import {
   isFlyAppAlreadyDeletedError,
 } from './auth-deletion-policy.js';
 import { withUserGatewayLifecycleLock } from './gateway-lifecycle-lock.service.js';
-import { getHostedGatewayProvisioning } from './gateway/hosted-provisioning.js';
 import { env } from '../config/env.js';
 
 // ── Types ──────────────────────────────────────────────
@@ -436,7 +435,7 @@ export async function deleteUser(userId: string): Promise<void> {
       const retainedAppNames = new Set(retainedGatewayRows.rows.map((row) => row.fly_app_name));
       const confirmedDeletedAppNames = new Set<string>();
       if (flyAppNames.length > 0) {
-        const { destroyApp } = getHostedGatewayProvisioning();
+        const { destroyApp } = await import('./fly.service.js');
         for (const flyAppName of flyAppNames) {
           let deletionConfirmed = false;
           try {

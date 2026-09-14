@@ -8,7 +8,7 @@ import Foundation
 // tool result card views under `Shared/Views/Chat/ToolResultCards/`.
 //
 // The iOS command-params counterparts (CalendarAddParams, RemindersUpdateParams,
-// etc.) remain in RemClaw/Sources/Gateway/DeviceCommandTypes.swift — Mac does
+// etc.) remain in Rem/Sources/Gateway/DeviceCommandTypes.swift — Mac does
 // not send those commands, so they are iOS-only.
 
 // MARK: - Calendar

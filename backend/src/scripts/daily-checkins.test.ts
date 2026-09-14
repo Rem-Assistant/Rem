@@ -331,7 +331,7 @@ describe('deliverCheckin — artifact-first notification lifecycle', () => {
     };
   }
 
-  it('notifies and stamps only after the canonical Today artifact is delivered', async () => {
+  it('notifies and stamps after the canonical Today artifact is authored', async () => {
     const deps = dependencies();
     const result = await deliverCheckin(checkin(), NOW, deps);
 
@@ -348,6 +348,26 @@ describe('deliverCheckin — artifact-first notification lifecycle', () => {
     );
     expect(deps.sendPush).toHaveBeenCalledOnce();
     expect(deps.stampCheckinRun).toHaveBeenCalledOnce();
+  });
+
+  it('does not notify legacy clients before gateway conversation delivery', async () => {
+    const deps = dependencies({
+      readAuthoredBriefDelivery: vi.fn(async () => ({
+        markdown: 'Gateway-free canonical prose.',
+        summary: 'Gateway-free canonical prose.',
+        headline: 'Your brief',
+        delivered: false,
+        source: 'gateway' as const,
+        revision: '11111111-1111-4111-8111-111111111111',
+        authoredSlot: 'morning' as const,
+      })),
+    });
+
+    const result = await deliverCheckin(checkin(), NOW, deps);
+
+    expect(result).toEqual({ pushed: 0, artifactDelivered: false, outcome: 'retrying' });
+    expect(deps.sendPush).not.toHaveBeenCalled();
+    expect(deps.stampCheckinRun).not.toHaveBeenCalled();
   });
 
   it('serializes APNs so an older paused worker cannot send after a newer slot', async () => {
@@ -950,7 +970,7 @@ describe('deliverCheckin — artifact-first notification lifecycle', () => {
     expect(deps.stampCheckinRun).toHaveBeenCalledOnce();
   });
 
-  it('does not notify or stamp when the artifact is not visibly delivered', async () => {
+  it('does not notify or stamp when no canonical authored artifact is available', async () => {
     const deps = dependencies({ readAuthoredBriefDelivery: vi.fn(async () => null) });
     const result = await deliverCheckin(checkin(), NOW, deps);
 
