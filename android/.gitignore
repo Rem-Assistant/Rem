@@ -1,0 +1,16 @@
+.kotlin/
+.gradle/
+**/.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+*.jks
+*.keystore
+keystore.properties
+*.apk
+*.aab
+.DS_Store
+redmi-*.png

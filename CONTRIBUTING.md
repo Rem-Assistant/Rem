@@ -75,6 +75,7 @@ often the only way a reviewer can see your change.
 | Tool | Version | Needed for |
 |---|---|---|
 | macOS + Xcode | **Xcode 26 or newer** — both app targets set a deployment target of `26.0` | iOS and macOS apps |
+| Android Studio + Android SDK | SDK 26+ (compile/target 36); use the JDK that ships with Android Studio | Android client under `android/` |
 | Node.js | **20+** for `backend/` | backend |
 | PostgreSQL | 16 (what CI runs) | backend tests |
 | Git | any recent version | everything |
@@ -104,6 +105,9 @@ xcodebuild -project Rem.xcodeproj -scheme Rem \
 xcodebuild -project Rem.xcodeproj -scheme RemMac \
   -destination 'platform=macOS' build
 
+# Android dogfood client (see android/README.md)
+cd android && ./gradlew :app:assembleDebug
+
 # Backend — build/typecheck runs offline with no keys and no database:
 cd backend && npm install && npm run build
 # Integration tests need a local PostgreSQL 16 (set DATABASE_URL / TEST_DATABASE_URL):
@@ -128,6 +132,7 @@ and a build of both `Rem` and `RemMac` schemes.
 | Path | What it is |
 |---|---|
 | `Rem/` | iOS app |
+| `android/` | Native Android client (Kotlin / Compose). Early dogfood. |
 | `RemMac/` | macOS app — menu bar, local gateway host |
 | `Shared/` | Cross-platform models, protocols, and SwiftUI views used by both apps |
 | `backend/` | Node/Express: auth, gateway provisioning, connectors |
