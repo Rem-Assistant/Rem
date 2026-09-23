@@ -170,6 +170,98 @@ enum AppTab: Int, CaseIterable {
     }
 }
 
+// MARK: - Shared Main Bottom Toolbar
+
+/// The Agenda/Inbox bottom-toolbar contents — hamburger (tab switch) · centered
+/// new-chat (brand-blue, `.borderedProminent`) · plus (create). Extracted as a free
+/// `@ViewBuilder` so the shipping `ContentView` toolbar and the README Agenda fixture
+/// (`ReadmeAgendaFullFixtureView`) render the *exact same* controls instead of a
+/// hand-drawn copy — state and actions are injected as parameters so the builder stays
+/// view-agnostic. Behavior is identical to the previous inline `bottomToolbar` body.
+@MainActor
+@ViewBuilder
+func remMainBottomToolbar(
+    selectedTab: AppTab,
+    hasActiveSession: Bool,
+    firstUseHintPresented: Binding<Bool>,
+    onSelectTab: @escaping (AppTab) -> Void,
+    onNewChat: @escaping () -> Void,
+    onDismissFirstUseHint: @escaping () -> Void,
+    onCreateTask: @escaping () -> Void,
+    onNewFolder: @escaping () -> Void,
+    onNewList: @escaping () -> Void
+) -> some View {
+    // Hamburger menu — switches between tabs
+    Menu {
+        ForEach([AppTab.settings, .history, .inbox, .agenda], id: \.self) { tab in
+            Button {
+                onSelectTab(tab)
+            } label: {
+                Label(tab.title, systemImage: tab.icon)
+            }
+        }
+    } label: {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 20, weight: .medium))
+    }
+    .accessibilityIdentifier("menu-button")
+    .accessibilityLabel("Menu")
+
+    Spacer()
+
+    // New chat (center) — hidden on Settings and when a session is active
+    if selectedTab != .settings && !hasActiveSession {
+        Button { onNewChat() } label: {
+            Image(systemName: "message.badge.waveform.fill")
+                .font(.system(size: 20, weight: .medium))
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(DesignTokens.Color.brandBlue)
+        .popover(isPresented: firstUseHintPresented, arrowEdge: .bottom) {
+            FirstUseHintCard(
+                onStartChat: {
+                    onDismissFirstUseHint()
+                    onNewChat()
+                },
+                onDismiss: { onDismissFirstUseHint() }
+            )
+            .frame(maxWidth: 360)
+            .padding(DesignTokens.Spacing.sm)
+        }
+        .accessibilityIdentifier("new-chat-button")
+        .accessibilityLabel("New Chat")
+        Spacer()
+    }
+
+    // Plus (create) — visible on Agenda/Inbox only. Sorted-style: the "+"
+    // creates a Task/Event (the primary action), or a List/Folder to organize.
+    if selectedTab == .agenda || selectedTab == .inbox {
+        Menu {
+            Button {
+                onCreateTask()
+            } label: {
+                Label("New Task or Event", systemImage: "checklist")
+            }
+            Divider()
+            Button {
+                onNewFolder()
+            } label: {
+                Label("New Folder", systemImage: "folder")
+            }
+            Button {
+                onNewList()
+            } label: {
+                Label("New List", systemImage: "list.bullet")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 20, weight: .medium))
+        }
+        .accessibilityIdentifier("create-task-button")
+        .accessibilityLabel("Create")
+    }
+}
+
 /// Selects exactly one owner for connection recovery. Chat Sessions and pushed chat destinations
 /// own the canonical chat recovery card; other root tabs use the app-wide banner.
 enum MainConnectionRecoveryBannerPolicy {
@@ -987,80 +1079,25 @@ struct RemMainTabView: View {
 
     @ViewBuilder
     private var bottomToolbar: some View {
-        // Hamburger menu — switches between tabs
-        Menu {
-            ForEach([AppTab.settings, .history, .inbox, .agenda], id: \.self) { tab in
-                Button {
-                    selectedTab = tab
-                    navigationPath = NavigationPath()
-                } label: {
-                    Label(tab.title, systemImage: tab.icon)
-                }
-            }
-        } label: {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 20, weight: .medium))
-        }
-        .accessibilityIdentifier("menu-button")
-        .accessibilityLabel("Menu")
-
-        Spacer()
-
-        // New chat (center) — hidden on Settings and when a session is active
-        if selectedTab != .settings && gateway.mainSessionKey == nil {
-            Button { openNewChat(autoStartVoice: true) } label: {
-                Image(systemName: "message.badge.waveform.fill")
-                    .font(.system(size: 20, weight: .medium))
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(DesignTokens.Color.brandBlue)
-            .popover(isPresented: Binding(
+        // Delegates to the shared `remMainBottomToolbar` builder so the app and the
+        // README Agenda fixture render identical controls (DRY per CLAUDE.md).
+        remMainBottomToolbar(
+            selectedTab: selectedTab,
+            hasActiveSession: gateway.mainSessionKey != nil,
+            firstUseHintPresented: Binding(
                 get: { shouldShowFirstUseHint },
                 set: { if !$0 { hasDismissedFirstUseHint = true } }
-            ), arrowEdge: .bottom) {
-                FirstUseHintCard(
-                    onStartChat: {
-                        hasDismissedFirstUseHint = true
-                        openNewChat(autoStartVoice: true)
-                    },
-                    onDismiss: { hasDismissedFirstUseHint = true }
-                )
-                .frame(maxWidth: 360)
-                .padding(DesignTokens.Spacing.sm)
-            }
-            .accessibilityIdentifier("new-chat-button")
-            .accessibilityLabel("New Chat")
-            Spacer()
-        }
-
-        // Plus (create) — visible on Agenda/Inbox only. Sorted-style: the "+"
-        // creates a Task/Event (the primary action), or a List/Folder to organize.
-        // "View by List" moved to the agenda's in-list Sort control.
-        if selectedTab == .agenda || selectedTab == .inbox {
-            Menu {
-                Button {
-                    navigationPath.append("create_task")
-                } label: {
-                    Label("New Task or Event", systemImage: "checklist")
-                }
-                Divider()
-                Button {
-                    showCreateFolder = true
-                } label: {
-                    Label("New Folder", systemImage: "folder")
-                }
-                Button {
-                    showCreateList = true
-                } label: {
-                    Label("New List", systemImage: "list.bullet")
-                }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .medium))
-            }
-            .accessibilityIdentifier("create-task-button")
-            .accessibilityLabel("Create")
-        }
+            ),
+            onSelectTab: { tab in
+                selectedTab = tab
+                navigationPath = NavigationPath()
+            },
+            onNewChat: { openNewChat(autoStartVoice: true) },
+            onDismissFirstUseHint: { hasDismissedFirstUseHint = true },
+            onCreateTask: { navigationPath.append("create_task") },
+            onNewFolder: { showCreateFolder = true },
+            onNewList: { showCreateList = true }
+        )
     }
 
     // MARK: - Tab Content
