@@ -55,11 +55,21 @@ command -v xcrun >/dev/null || { echo "error: xcrun not found (needs Xcode/macOS
 
 mkdir -p "$OUT"
 echo "==> Building $SCHEME (Debug, simulator) once…"
+# Capture the FULL build log so a compile failure surfaces the actual `error:` lines
+# instead of being swallowed by `tail -3` (which hid why the build broke in CI).
+set +e
 xcodebuild -project Rem.xcodeproj -scheme "$SCHEME" \
   -configuration Debug \
   -destination "generic/platform=iOS Simulator" \
   -derivedDataPath "$DERIVED" \
-  build 2>&1 | tail -3
+  build 2>&1 | tee "$OUT/xcodebuild.log" | tail -3
+BUILD_STATUS=${PIPESTATUS[0]}
+set -e
+if [ "$BUILD_STATUS" -ne 0 ]; then
+  echo "==> BUILD FAILED (exit $BUILD_STATUS). Compiler errors:"
+  grep -nE "error:" "$OUT/xcodebuild.log" | head -60 || true
+  exit "$BUILD_STATUS"
+fi
 
 APP="$(find "$DERIVED/Build/Products" -maxdepth 3 -name '*.app' 2>/dev/null | head -1)"
 [ -n "$APP" ] || { echo "error: no .app produced under $DERIVED" >&2; exit 1; }

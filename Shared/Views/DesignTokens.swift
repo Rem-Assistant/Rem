@@ -121,10 +121,15 @@ public enum DesignTokens {
     }
 
     public enum CornerRadius {
+        // Kept in lockstep with the design-system single source (tokens.json):
+        // monotonic — small < medium < large < xlarge. The prior values had
+        // large (24) > xlarge (16), which contradicted the names and drifted from
+        // tokens.json; realigned so the Figma variables (generated from tokens.json)
+        // and this app agree.
         public static let small: CGFloat = 8
         public static let medium: CGFloat = 12
-        public static let large: CGFloat = 24
-        public static let xlarge: CGFloat = 16
+        public static let large: CGFloat = 16
+        public static let xlarge: CGFloat = 24
     }
 
     /// Frame hints aligned with the local **Native** reference app
