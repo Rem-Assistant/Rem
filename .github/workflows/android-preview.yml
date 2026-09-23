@@ -55,24 +55,10 @@ jobs:
           profile: pixel_5
           disable-animations: false
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            set -x
-            APP=com.remapp.rem.debug
-            adb wait-for-device
-            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-            for P in android.permission.READ_CALENDAR android.permission.RECORD_AUDIO android.permission.POST_NOTIFICATIONS; do
-              adb shell pm grant "$APP" "$P" || true
-            done
-            adb shell am start -n "$APP/com.remapp.rem.MainActivity"
-            sleep 6
-            ( adb shell screenrecord --time-limit 24 --bit-rate 6000000 /sdcard/preview.mp4 ) &
-            REC=$!
-            sleep 3;  adb shell input tap 540 1900
-            sleep 3;  adb shell input swipe 540 1400 540 700 300
-            sleep 3;  adb shell input tap 540 1900
-            sleep 3;  adb shell input keyevent 4
-            wait "$REC" || true
-            adb pull /sdcard/preview.mp4 preview.mp4 || true
+          # emulator-runner executes the `script` LINE BY LINE (a separate `sh -c` per
+          # line), which breaks multi-line constructs and per-line variables. Invoke a
+          # committed script so the whole walkthrough runs in ONE shell.
+          script: bash android/ci/walkthrough.sh
 
       - name: Convert to GIF
         run: |
