@@ -103,8 +103,10 @@ struct ReadmeBriefChatFixtureView: View {
 private final class ReadmeChatFixtureTransport: @unchecked Sendable, RemChatTransport {
     static let sessionKey = "readme-chat-fixture"
     /// The Daily Brief is delivered into the durable Today conversation; mirror that key so the
-    /// fixture matches how the real brief-as-chat transcript is addressed.
-    static let briefSessionKey = DailyBriefTranscriptReconciler.durableSessionKey
+    /// fixture matches how the real brief-as-chat transcript is addressed. Spelled out because
+    /// `DailyBriefTranscriptReconciler` lives in the iOS target and this file also builds for Mac;
+    /// keep it equal to `DailyBriefTranscriptReconciler.durableSessionKey`.
+    static let briefSessionKey = "rem-orchestrator"
 
     private let messages: [[String: Any]]
     private let key: String
