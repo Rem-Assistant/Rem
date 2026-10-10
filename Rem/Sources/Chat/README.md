@@ -9,7 +9,8 @@ iOS-specific glue around the shared Rem chat view.
 ```
 Chat/
 ├── RemChatView.swift          # iOS wrapper — wires UsageService + RemTalkModeManager
-│                              # into SharedRemChatView's optional hooks
+│                              # into SharedRemChatView's optional hooks; DEBUG
+│                              # `--rem-ds-chat` swaps in the design-system adapter
 └── ChatHistoryView.swift      # Session list with search and management (iOS-only)
 ```
 
@@ -29,6 +30,7 @@ chat surface can render the same custom UI as iOS:
 | File | Purpose |
 |------|---------|
 | `RemChatView.swift` | Thin iOS wrapper around `SharedRemChatView`. Wires `UsageService` into quota hooks, `RemTalkModeManager` into voice hooks, and injects the active `RemGatewaySessionManager` into Manage Models so its switches write gateway state rather than a local preference. Provider submenus load only from gateway model-auth runtime evidence. Loading/failure is distinct from verified empty; an older managed gateway's partial `models.authStatus` response contributes positive rows without treating omissions as unavailable or resetting an explicit selection. A refresh retains only same-session/candidate verified evidence, while an unknown new session blocks an unsafe explicit Send. The monotonic operator-session generation invalidates evidence before credential/socket replacement, including same-URL token swaps; foregrounding, gateway-event revisions, and a bounded 60-second refresh re-probe without destructively clearing a valid snapshot. Model repair and local dispatch acceptance finish before the quota hook runs, preventing a rejected reset or health check from consuming a request. Quota reset timers publish an observable invalidation so the banner, composer, and voice entry unlock at the UTC boundary; tapping a denial banner only presents still-current evidence and never recreates an expired zero from the retained summary. |
+| `RemChatView.swift` (design-system swap) | In DEBUG builds launched with `--rem-ds-chat`, ordinary chats render through `../DesignSystemAdapter/RemChatScreenAdapter.swift` (canonical `RemDesignSystem.ChatScreen`) with the same view model, quota hook, voice hook and after-send hook. Task, brief and voice conversations, and any chat handed back with "Open classic chat", stay on `SharedRemChatView`. Release builds never read the flag. |
 | `ChatHistoryView.swift` | Lists past sessions with search, swipe-to-delete, rename, pull-to-refresh. Session visibility rules filter out empty placeholders. Relative time formatting ("Just now", "5m", "Yesterday") |
 
 Chat Sessions uses the shared `ChatConnectionRecoveryCard` whenever the operator is unavailable,
@@ -38,6 +40,7 @@ wake-plus-reconnect behavior and successful operator recovery resumes the normal
 
 ## Patterns & Conventions
 
+- **One send path**: `Shared/ViewModels/ChatSendCoordinator.swift` holds the composer gates, payload snapshot, model repair hand-off and post-repair quota slot. `SharedRemChatView.sendIfReady()` and the design-system adapter both call it; do not add a second send orchestration.
 - **Shared view as source of truth**: Visual surface (speech bubbles, thinking blocks, cards, composer) lives in `Shared/Views/Chat/SharedRemChatView.swift`. iOS and Mac both render the same view; iOS adds voice + quota via optional hooks, Mac passes nil for those.
 - **Manage Models destination**: Platform wrappers inject `SharedModelsSettingsScreen` with their
   active gateway session and the same tri-state provider evidence used by the composer. Unknown

@@ -45,6 +45,9 @@ Shared/
 │   ├── Chat/                           # Shared chat surface and tool cards
 │   ├── OAuth/                          # Connected accounts / connector surfaces
 │   └── Tasks/                          # Agenda, Inbox, shared task rows, previews
+├── ViewModels/
+│   ├── RemConversationViewModel.swift  # Rem-runtime conversation state
+│   └── ChatSendCoordinator.swift       # The one chat send path (gates, snapshot, model repair, quota)
 ├── PreviewSupport/                     # DEBUG fixture stores and gateway states
 └── Services/
     ├── GatewayConfigStore.swift        # Multi-gateway persistence (UserDefaults + Keychain)
