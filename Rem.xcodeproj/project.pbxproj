@@ -16,6 +16,7 @@
 		77C1AA012F3D8A0100D1E2F3 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 77C1AA002F3D8A0100D1E2F3 /* GoogleSignIn */; };
 		88A100012F50000100AA0001 /* RemWidget.appex in CopyFiles */ = {isa = PBXBuildFile; fileRef = 88A100022F50000100AA0001 /* RemWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AA1B2C3D2F5A0B0100E1F2A3 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA1B2C3C2F5A0B0100E1F2A3 /* PostHog */; };
+		DE51A0012F7A0C0100D5A001 /* RemDesignSystem in Frameworks */ = {isa = PBXBuildFile; productRef = DE51A0022F7A0C0100D5A001 /* RemDesignSystem */; };
 		CC1D2E3F2F6A0C0100B1C2D3 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CC1D2E3E2F6A0C0100B1C2D3 /* Sparkle */; };
 		D58B9FB62F440AA500933EE5 /* RemChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = D58B9FB52F440AA500933EE5 /* RemChatUI */; };
 		D58B9FB82F440AA500933EE5 /* RemKit in Frameworks */ = {isa = PBXBuildFile; productRef = D58B9FB72F440AA500933EE5 /* RemKit */; };
@@ -202,6 +203,7 @@
 				D58B9FB82F440AA500933EE5 /* RemKit in Frameworks */,
 				77C1AA012F3D8A0100D1E2F3 /* GoogleSignIn in Frameworks */,
 				AA1B2C3D2F5A0B0100E1F2A3 /* PostHog in Frameworks */,
+				DE51A0012F7A0C0100D5A001 /* RemDesignSystem in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -308,6 +310,7 @@
 				7784CE1F2F39942D00798D53 /* RemProtocol */,
 				77C1AA002F3D8A0100D1E2F3 /* GoogleSignIn */,
 				AA1B2C3C2F5A0B0100E1F2A3 /* PostHog */,
+				DE51A0022F7A0C0100D5A001 /* RemDesignSystem */,
 				D58B9FB52F440AA500933EE5 /* RemChatUI */,
 				D58B9FB72F440AA500933EE5 /* RemKit */,
 				D58B9FB92F440AA500933EE5 /* RemProtocol */,
@@ -479,6 +482,7 @@
 			packageReferences = (
 				77C1AA042F3D8A0100D1E2F3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				AA1B2C3E2F5A0B0100E1F2A3 /* XCRemoteSwiftPackageReference "posthog-ios" */,
+				DE51A0032F7A0C0100D5A001 /* XCRemoteSwiftPackageReference "Rem-Design-System" */,
 				D58B9FB42F440AA500933EE5 /* XCLocalSwiftPackageReference "Packages/RemKit" */,
 				CC1D2E402F6A0C0100B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
@@ -1256,6 +1260,14 @@
 				minimumVersion = 2.9.0;
 			};
 		};
+		DE51A0032F7A0C0100D5A001 /* XCRemoteSwiftPackageReference "Rem-Design-System" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Rem-Assistant/Rem-Design-System";
+			requirement = {
+				kind = revision;
+				revision = 8b05bcf933dc49bdb84d4ff25be426c012514e85;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1309,6 +1321,11 @@
 		D58B9FB92F440AA500933EE5 /* RemProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RemProtocol;
+		};
+		DE51A0022F7A0C0100D5A001 /* RemDesignSystem */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DE51A0032F7A0C0100D5A001 /* XCRemoteSwiftPackageReference "Rem-Design-System" */;
+			productName = RemDesignSystem;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
