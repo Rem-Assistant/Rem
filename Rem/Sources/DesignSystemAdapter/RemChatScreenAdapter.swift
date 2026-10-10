@@ -34,9 +34,14 @@ struct RemChatScreenAdapter: View {
     let onVoice: (() -> Void)?
     /// Switches this conversation back to the classic chat surface.
     let onUseClassicChat: () -> Void
+    /// The gateway-backed Models destination the classic picker's Manage Models footer presents
+    /// (`SharedRemChatView.modelsSettingsDestination`); nil falls back to the same local view.
+    let modelsSettingsDestination: (() -> AnyView)?
 
     @State private var isComposerFocused = false
     @State private var showsFileImporter = false
+    /// Manage Models, as the classic picker's `showsModelsSheet`.
+    @State private var showsModelsSheet = false
     @State private var actionsTarget: MessageActionsTarget?
     @State private var pendingPresentation: ChatActionRouter.Presentation = .none
     @State private var selectedText: SelectedTextItem?
@@ -65,6 +70,16 @@ struct RemChatScreenAdapter: View {
         let shownEntries: [RemDesignSystem.ChatTranscriptEntry] = hidesTranscript ? [] : transcript.entries
         let voiceAvailable: Bool = onVoice != nil && hasQuota()
         let router: ChatActionRouter = makeRouter(transcript: transcript)
+        let modelMenu: ChatModelMenuDisplay = ChatDisplayMapper.modelMenu(
+            modelChoices: viewModel.modelChoices,
+            defaultModelLabel: viewModel.defaultModelLabel,
+            providerEvidence: providerEvidence,
+            effectiveSelectionID: ChatSendCoordinator.effectiveModelSelectionID(
+                viewModel: viewModel,
+                providerEvidence: providerEvidence
+            ),
+            showsModelPicker: viewModel.showsModelPicker
+        )
         let header: RemDesignSystem.ChatHeaderDisplay = ChatDisplayMapper.header(
             connectionState: connectionState,
             runtimeOwnsConversation: runtimeOwnsConversation,
@@ -84,6 +99,7 @@ struct RemChatScreenAdapter: View {
                 pendingRunCount: viewModel.pendingRunCount,
                 streamingAssistantText: viewModel.streamingAssistantText
             ),
+            model: modelMenu,
             voiceAvailable: voiceAvailable,
             isFocused: isComposerFocused
         )
@@ -98,6 +114,7 @@ struct RemChatScreenAdapter: View {
             header: header,
             composer: composer,
             emptyState: emptyState,
+            modelMenu: modelMenu.isShown ? makeModelMenu(modelMenu, router: router) : nil,
             onAction: { (action: RemDesignSystem.ChatScreenAction) in router.handle(action) }
         ) {
             if historyPending {
@@ -117,6 +134,9 @@ struct RemChatScreenAdapter: View {
         ) { result in
             guard case let .success(urls) = result else { return }
             SharedRemChatView.importImageFiles(urls, into: viewModel)
+        }
+        .sheet(isPresented: $showsModelsSheet) {
+            modelsSheet
         }
         .sheet(item: $actionsTarget, onDismiss: presentPendingAfterActions) { target in
             messageActionsSheet(target: target, transcript: transcript, router: router)
@@ -155,9 +175,46 @@ struct RemChatScreenAdapter: View {
             setFocused: { isComposerFocused = $0 },
             presentAttachmentImporter: { showsFileImporter = true },
             presentMessageActions: { actionsTarget = MessageActionsTarget(id: $0) },
+            presentModelSettings: { showsModelsSheet = true },
             starterText: { id in starters.first(where: { $0.id == id })?.text },
             messageText: { id in transcript.message(id: id)?.text }
         )
+    }
+
+    private func makeModelMenu(
+        _ display: ChatModelMenuDisplay,
+        router: ChatActionRouter
+    ) -> RemDesignSystem.ChatModelMenu {
+        RemDesignSystem.ChatModelMenu(
+            providers: display.providers,
+            selection: display.selection,
+            automaticLabel: ChatDisplayMapper.automaticModelLabel,
+            accessibilityPrefix: "chat",
+            onSelect: { (selection: RemDesignSystem.ChatModelSelection) in router.selectModel(selection) },
+            // The classic picker always offers Manage Models.
+            onManageModels: { router.manageModels() }
+        )
+    }
+
+    /// The classic picker's Manage Models sheet, unchanged: the same destination and Done button.
+    private var modelsSheet: some View {
+        NavigationStack {
+            Group {
+                if let modelsSettingsDestination {
+                    modelsSettingsDestination()
+                } else {
+                    SharedModelsSettingsView(
+                        models: viewModel.modelChoices,
+                        runtimeConfiguredProviderIDs: providerEvidence.effectiveProviderIDs ?? []
+                    )
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showsModelsSheet = false }
+                }
+            }
+        }
     }
 
     @ViewBuilder

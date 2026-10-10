@@ -137,6 +137,7 @@ struct ChatDisplayMapperTests {
             attachments: [],
             availability: .disabled(reason: "Daily limit reached."),
             phase: .sending,
+            model: hiddenModelMenu,
             voiceAvailable: true,
             isFocused: false
         )
@@ -162,7 +163,7 @@ struct ChatDisplayMapperTests {
         ])
         let composer = ChatDisplayMapper.composer(
             draft: "", attachments: [photo], availability: .enabled, phase: .idle,
-            voiceAvailable: false, isFocused: false)
+            model: hiddenModelMenu, voiceAvailable: false, isFocused: false)
         // A content attachment makes a message on its own.
         #expect(composer.hasContentAttachments)
         #expect(composer.canSend)
@@ -266,6 +267,111 @@ struct ChatDisplayMapperTests {
             transcriptIsEmpty: true, isHistoryPending: false, hasPendingDraft: true, starters: starters) == nil)
         #expect(ChatDisplayMapper.emptyState(
             transcriptIsEmpty: false, isHistoryPending: false, hasPendingDraft: false, starters: starters) == nil)
+    }
+
+    // MARK: Model menu
+
+    private let hiddenModelMenu = ChatModelMenuDisplay(
+        isShown: false, providers: [], selection: .automatic, label: "Automatic")
+
+    private let miniMax = RemChatModelChoice(
+        modelID: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7 (via GMI MaaS)", provider: "gmi", contextWindow: nil)
+    private let managedSibling = RemChatModelChoice(
+        modelID: "SomeOtherManagedModel", name: "Other Managed", provider: "gmi", contextWindow: nil)
+    private let sonnet = RemChatModelChoice(
+        modelID: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", contextWindow: nil)
+    private let haiku = RemChatModelChoice(
+        modelID: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic", contextWindow: nil)
+    private let gpt = RemChatModelChoice(
+        modelID: "gpt-5", name: "GPT-5", provider: "openai", contextWindow: nil)
+
+    private func modelMenu(
+        _ choices: [RemChatModelChoice],
+        evidence: RuntimeProviderAuthEvidence,
+        selection: String = RemChatViewModel.defaultModelSelectionID
+    ) -> ChatModelMenuDisplay {
+        ChatDisplayMapper.modelMenu(
+            modelChoices: choices,
+            defaultModelLabel: "Default",
+            providerEvidence: evidence,
+            effectiveSelectionID: selection,
+            showsModelPicker: !choices.isEmpty
+        )
+    }
+
+    @Test func modelMenuListsExactlyTheClassicPickerGroups() {
+        let choices = [sonnet, gpt, managedSibling, miniMax, haiku]
+        let evidence = RuntimeProviderAuthEvidence.verified(["anthropic"])
+        let menu = modelMenu(choices, evidence: evidence)
+
+        let classic = ModelPickerPolicy.composerGroups(
+            choices,
+            runtimeConfiguredProviderIDs: ["anthropic"],
+            defaultModelLabel: "Default",
+            hasAuthoritativeProviderEvidence: true)
+        #expect(menu.providers.map(\.name) == classic.map(\.provider))
+        #expect(menu.providers.map { $0.models.map(\.id) } == classic.map { $0.models.map(\.selectionID) })
+
+        // BYOK: only the runtime-authenticated provider; managed: only canonical MiniMax, with
+        // transport jargon stripped from its name.
+        #expect(menu.providers == [
+            RemDesignSystem.ChatModelProvider(id: "Claude", name: "Claude", models: [
+                RemDesignSystem.ChatModelOption(id: haiku.selectionID, name: "Claude Haiku 4.5"),
+                RemDesignSystem.ChatModelOption(id: sonnet.selectionID, name: "Claude Sonnet 4.5"),
+            ]),
+            RemDesignSystem.ChatModelProvider(id: "MiniMax", name: "MiniMax", models: [
+                RemDesignSystem.ChatModelOption(id: miniMax.selectionID, name: "MiniMax M2.7"),
+            ]),
+        ])
+        #expect(menu.isShown)
+        #expect(menu.selection == .automatic)
+        #expect(menu.label == ModelPickerPresentation.automaticTitle)
+    }
+
+    @Test func modelMenuHidesProviderGroupsUntilEvidenceIsAuthoritative() {
+        let unknown = modelMenu(
+            [sonnet, miniMax],
+            evidence: .loading(lastVerifiedProviderIDs: nil),
+            selection: sonnet.selectionID)
+        // Automatic (and Manage Models) stay available as the escape hatch; no provider submenus.
+        #expect(unknown.providers.isEmpty)
+        #expect(unknown.isShown)
+        #expect(unknown.selection == .model(id: sonnet.selectionID))
+        #expect(unknown.label == "Claude Sonnet 4.5")
+
+        let failedWithSnapshot = modelMenu(
+            [sonnet, miniMax], evidence: .failed(lastVerifiedProviderIDs: []))
+        #expect(failedWithSnapshot.providers.map(\.name) == ["MiniMax"])
+    }
+
+    @Test func modelMenuIsHiddenWithoutACatalogAsInTheClassicPicker() {
+        let menu = modelMenu([], evidence: .verified(["anthropic"]))
+        #expect(!menu.isShown)
+        #expect(menu.providers.isEmpty)
+        let composer = ChatDisplayMapper.composer(
+            draft: "", attachments: [], availability: .enabled, phase: .idle,
+            model: menu, voiceAvailable: false, isFocused: false)
+        #expect(!composer.showsModel)
+    }
+
+    @Test func modelSelectionRoundTripsTheViewModelSelectionID() {
+        #expect(ChatDisplayMapper.modelSelection(forSelectionID: RemChatViewModel.defaultModelSelectionID) == .automatic)
+        #expect(ChatDisplayMapper.selectionID(for: .automatic) == RemChatViewModel.defaultModelSelectionID)
+        #expect(ChatDisplayMapper.modelSelection(forSelectionID: sonnet.selectionID) == .model(id: sonnet.selectionID))
+        #expect(ChatDisplayMapper.selectionID(for: .model(id: sonnet.selectionID)) == sonnet.selectionID)
+        #expect(ChatDisplayMapper.automaticModelLabel == ModelPickerPresentation.automaticTitle)
+    }
+
+    @Test func composerShowsTheClassicTriggerTitle() {
+        let menu = modelMenu([sonnet, miniMax], evidence: .verified(["anthropic"]), selection: sonnet.selectionID)
+        let composer = ChatDisplayMapper.composer(
+            draft: "", attachments: [], availability: .enabled, phase: .idle,
+            model: menu, voiceAvailable: false, isFocused: false)
+        #expect(composer.showsModel)
+        #expect(composer.modelLabel == "Claude Sonnet 4.5")
+        #expect(RemDesignSystem.ChatModelMenu.triggerLabel(
+            for: menu.selection, providers: menu.providers,
+            automaticLabel: ChatDisplayMapper.automaticModelLabel) == composer.modelLabel)
     }
 
     // MARK: Message actions

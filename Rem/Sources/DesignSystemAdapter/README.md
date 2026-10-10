@@ -53,7 +53,10 @@ builds never read the flag.
 | `availability` | `.disabled(reason:)` when quota is denied (banner text), while a send is being prepared (model repair + quota, no run to cancel yet), or while an explicit model waits for provider evidence; else `.enabled` |
 | `phase` | `.idle` with no pending run; `.sending` with a run and no streamed text; `.streaming` once text arrives |
 | `voiceAvailable` | voice hook present and quota available |
-| `showsModel` | `false` until the model menu lands (phase 1c); sends still use the view model's selection |
+| `showsModel` | `RemChatViewModel.showsModelPicker` (the catalog is non-empty), as the classic picker |
+| `modelLabel` | `ModelPickerPresentation.composerTitle` for the effective selection |
+| `ChatModelMenu.providers` | `ModelPickerPolicy.composerGroups` with the runtime provider evidence, exactly the classic picker's groups: managed MiniMax only, BYOK providers only when runtime-authenticated, none until evidence is authoritative; ids are `selectionID`s, names via `ModelUserFacingCopy` |
+| `ChatModelMenu.selection` | `ChatSendCoordinator.effectiveModelSelectionID`; `defaultModelSelectionID` ↔ `.automatic` |
 | `ChatMessageDisplay` | user/assistant prose only, cleaned by `MessageCleaner` via `SharedRemChatView.splitContent`, after the classic `visibleMessages` collapse |
 | `delivery` | always `.none`: the app has no acceptance or read evidence |
 | `time` | the message's own timestamp, host-formatted (short time); none without one |
@@ -74,12 +77,21 @@ builds never read the flag.
 | `starter` | fills the draft and focuses it, like the classic starters |
 | `transcript(.requestActions)` | `RemDesignSystem.MessageActionSheet` with Reply, Copy, Select Text; no reactions |
 | Reply / Copy / Select Text | quote into the draft / `UIPasteboard` / a selectable text sheet |
+| `ChatModelMenu` select | `RemChatViewModel.selectModel(_:)`, the classic picker's call |
+| `ChatModelMenu` Manage Models | the classic Manage Models sheet (`RemChatView`'s gateway-backed `SharedModelsSettingsScreen`) |
+
+The design-system composer disables its model trigger whenever input is disabled or a turn is in
+flight (`ChatComposerState.modelEnabled`). The classic picker stays open in more states (only
+preparing or sending a message closes it), so it can offer Automatic while an explicit model waits for
+provider evidence; the design-system surface cannot until the design system lets the host enable the
+menu separately.
 
 ## Phases
 
 1. **1a:** add the package and a probe view (removed in 1b; the Chat adapter supersedes it).
-2. **1b (this change):** ordinary Chat through `ChatScreen`, behind the DEBUG `--rem-ds-chat` flag,
+2. **1b:** ordinary Chat through `ChatScreen`, behind the DEBUG `--rem-ds-chat` flag,
    reusing the existing send path unchanged.
-3. **1c:** the long-press message sheet's remaining rows and the model menu.
+3. **1c:** the model menu (done: wired to the classic picker's policy and calls); the long-press
+   message sheet's remaining rows.
 4. **2:** task chat, Inbox, Agent activity.
 5. **3:** Settings.

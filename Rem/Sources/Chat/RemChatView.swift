@@ -166,11 +166,23 @@ struct RemChatView: View {
                 },
                 onAfterSend: { handleAfterSend() },
                 onVoice: onVoiceTap,
-                onUseClassicChat: { usesClassicChat = true }
+                onUseClassicChat: { usesClassicChat = true },
+                modelsSettingsDestination: { modelsSettingsScreen() }
             )
         } else {
             classicChat
         }
+    }
+
+    /// The gateway-backed Models page behind the composer picker's Manage Models footer, shared by
+    /// the classic chat and the design-system adapter.
+    private func modelsSettingsScreen() -> AnyView {
+        AnyView(SharedModelsSettingsScreen(
+            gateway: gateway,
+            runtimeProviderAuthEvidence: runtimeProviderAuthEvidence
+        ) {
+            viewModel.refresh()
+        })
     }
 
     private var classicChat: some View {
@@ -197,14 +209,7 @@ struct RemChatView: View {
             runtimeOwnsConversation: runtimeOwnsConversation,
             briefAccountID: gateway.authenticatedAccountIDForRecovery,
             runtimeProviderAuthEvidence: runtimeProviderAuthEvidence,
-            modelsSettingsDestination: {
-                AnyView(SharedModelsSettingsScreen(
-                    gateway: gateway,
-                    runtimeProviderAuthEvidence: runtimeProviderAuthEvidence
-                ) {
-                    viewModel.refresh()
-                })
-            },
+            modelsSettingsDestination: { modelsSettingsScreen() },
             isFreshConversation: isFreshConversation,
             initialExistingSessionTitle: initialExistingSessionTitle,
             requestedSessionKey: requestedSessionKey,

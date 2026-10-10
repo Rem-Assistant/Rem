@@ -24,6 +24,19 @@ nonisolated enum ChatHostContent: Equatable {
     case error(String)
 }
 
+/// The mapped model menu: what the classic composer picker lists and shows, as design-system values.
+/// `nonisolated` for the same reason as `ChatHostContent`.
+nonisolated struct ChatModelMenuDisplay: Equatable {
+    /// The trigger is shown only when the classic picker is (`RemChatViewModel.showsModelPicker`).
+    var isShown: Bool
+    /// Provider submenus in the classic order; empty until provider evidence is authoritative, which
+    /// leaves only Automatic and Manage Models, as in the classic picker.
+    var providers: [RemDesignSystem.ChatModelProvider]
+    var selection: RemDesignSystem.ChatModelSelection
+    /// The classic trigger title (`ModelPickerPresentation.composerTitle`).
+    var label: String
+}
+
 /// The mapped transcript: entries in transcript order plus what each host-content id stands for.
 struct ChatTranscriptDisplay {
     var entries: [RemDesignSystem.ChatTranscriptEntry]
@@ -136,27 +149,93 @@ enum ChatDisplayMapper {
         }
     }
 
+    /// `model` supplies the trigger's label and visibility (`modelMenu(…)`); the menu itself is a
+    /// `RemDesignSystem.ChatModelMenu` the adapter builds from the same display value.
     static func composer(
         draft: String,
         attachments: [RemPendingAttachment],
         availability: RemDesignSystem.ComposerAvailability,
         phase: RemDesignSystem.ComposerPhase,
+        model: ChatModelMenuDisplay,
         voiceAvailable: Bool,
         isFocused: Bool
     ) -> RemDesignSystem.ChatComposerState {
         RemDesignSystem.ChatComposerState(
             draft: draft,
             placeholder: "Ask anything",
-            // Phase 1c adds the model menu. Until then the model is not shown, rather than shown as
-            // a control that does nothing; sends still use the view model's selection.
-            modelLabel: "Auto",
+            modelLabel: model.label,
             attachments: Self.attachments(attachments),
             availability: availability,
             phase: phase,
-            showsModel: false,
+            showsModel: model.isShown,
             voiceAvailable: voiceAvailable,
             isFocused: isFocused
         )
+    }
+
+    // MARK: Model menu
+
+    /// The classic picker's Automatic title, used as the design-system trigger's automatic label.
+    static let automaticModelLabel = ModelPickerPresentation.automaticTitle
+
+    /// The composer's model menu, from exactly the sources the classic `SharedRemChatView` picker
+    /// uses: `ModelPickerPolicy.composerGroups` over the view model's catalog with the runtime
+    /// provider evidence (managed MiniMax only, BYOK providers only when runtime-authenticated,
+    /// no provider groups at all until evidence is authoritative), `ModelUserFacingCopy` names, and
+    /// the effective selection from `ChatSendCoordinator.effectiveModelSelectionID`.
+    ///
+    /// - Parameter showsModelPicker: `RemChatViewModel.showsModelPicker` (the catalog is non-empty),
+    ///   the classic picker's visibility rule.
+    static func modelMenu(
+        modelChoices: [RemChatModelChoice],
+        defaultModelLabel: String,
+        providerEvidence: RuntimeProviderAuthEvidence,
+        effectiveSelectionID: String,
+        showsModelPicker: Bool
+    ) -> ChatModelMenuDisplay {
+        let groups = ModelPickerPolicy.composerGroups(
+            modelChoices,
+            runtimeConfiguredProviderIDs: providerEvidence.effectiveProviderIDs ?? [],
+            defaultModelLabel: defaultModelLabel,
+            hasAuthoritativeProviderEvidence: providerEvidence.canPresentProviderMenus
+        )
+        let providers: [RemDesignSystem.ChatModelProvider] = groups.map { group in
+            RemDesignSystem.ChatModelProvider(
+                id: group.id,
+                name: group.provider,
+                models: group.models.map { choice in
+                    RemDesignSystem.ChatModelOption(
+                        id: choice.selectionID,
+                        name: ModelUserFacingCopy.modelName(choice.name)
+                    )
+                }
+            )
+        }
+        return ChatModelMenuDisplay(
+            isShown: showsModelPicker,
+            providers: providers,
+            selection: modelSelection(forSelectionID: effectiveSelectionID),
+            label: ModelPickerPresentation.composerTitle(
+                selectionID: effectiveSelectionID,
+                models: modelChoices
+            )
+        )
+    }
+
+    /// `RemChatViewModel.defaultModelSelectionID` is Automatic; any other id is an explicit model.
+    static func modelSelection(forSelectionID selectionID: String) -> RemDesignSystem.ChatModelSelection {
+        selectionID == RemChatViewModel.defaultModelSelectionID ? .automatic : .model(id: selectionID)
+    }
+
+    /// The id `RemChatViewModel.selectModel(_:)` takes for a menu choice: the inverse of
+    /// `modelSelection(forSelectionID:)`.
+    static func selectionID(for selection: RemDesignSystem.ChatModelSelection) -> String {
+        switch selection {
+        case .automatic:
+            return RemChatViewModel.defaultModelSelectionID
+        case .model(let id):
+            return id
+        }
     }
 
     // MARK: Empty state

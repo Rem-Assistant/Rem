@@ -18,9 +18,13 @@ import UIKit
 /// | `starter` | fills the draft and focuses it, as the classic starters do |
 /// | `transcript(.requestActions)` | presents `MessageActionSheet` (Reply, Copy, Select Text) |
 /// | `transcript(.messageAction)` | Reply quotes into the draft, Copy uses `UIPasteboard`, Select Text opens a selectable view |
+/// | `ChatModelMenu` `onSelect` (`selectModel`) | `RemChatViewModel.selectModel(_:)` with the classic picker's selection id (Automatic = `defaultModelSelectionID`) |
+/// | `ChatModelMenu` `onManageModels` (`manageModels`) | presents the classic Manage Models sheet (`RemChatView`'s gateway-backed Models destination) |
 ///
-/// Not routed in phase 1b (the adapter never offers them): overflow, activity details, reply
-/// context, retry, reactions, Mark as unread and Report.
+/// The model menu reports through `ChatModelMenu`'s closures, not a `ChatScreenAction` case.
+///
+/// Not routed (the adapter never offers them): overflow, activity details, reply context, retry,
+/// reactions, Mark as unread and Report.
 struct ChatActionRouter {
     /// What a message action asks the adapter to present next.
     enum Presentation: Equatable {
@@ -41,6 +45,7 @@ struct ChatActionRouter {
     let setFocused: (Bool) -> Void
     let presentAttachmentImporter: () -> Void
     let presentMessageActions: (String) -> Void
+    let presentModelSettings: () -> Void
     let starterText: (String) -> String?
     let messageText: (String) -> String?
 
@@ -86,6 +91,17 @@ struct ChatActionRouter {
         case .focusChanged(let focused):
             setFocused(focused)
         }
+    }
+
+    /// A model menu choice: the same call the classic picker makes. The view model ignores it while a
+    /// send is being prepared or sent, exactly as for the classic picker.
+    func selectModel(_ selection: RemDesignSystem.ChatModelSelection) {
+        viewModel.selectModel(ChatDisplayMapper.selectionID(for: selection))
+    }
+
+    /// The menu's Manage Models row: the classic picker's footer destination.
+    func manageModels() {
+        presentModelSettings()
     }
 
     /// Performs a row of the message sheet. The caller dismisses the sheet first and presents what
