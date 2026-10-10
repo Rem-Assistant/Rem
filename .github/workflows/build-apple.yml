@@ -5,13 +5,9 @@ name: Build Apple
 # Until 2026-08-11 nothing in CI compiled the iOS or Mac app. `build.yml` had exactly one job,
 # `build-backend`, on ubuntu. Every Swift change merged to staging was gated only by human review.
 #
-# What that cost, concretely: PR #1297 deleted the `openclaw` submodule gitlink (a `git add -A`
-# from a worktree that had no submodule). OpenClawKit lives INSIDE that submodule at
-# `openclaw/apps/shared/OpenClawKit`, so the app could not compile at all. It sat on staging across
-# three commits and no check went red. The PR that restored it, #1304, showed a single green check
-# — "Build Backend" — on a pull request whose entire purpose was fixing the iOS build.
-#
-# `submodules: recursive` on the checkout is the specific line that would have caught it.
+# What that cost, concretely: PR #1297 broke the iOS build and it sat on staging across three
+# commits with no check going red. The shared client now lives in-repo as Packages/RemKit (the
+# openclaw submodule was removed in the September de-brand), so a plain checkout has everything.
 #
 # Separate workflow rather than jobs in `build.yml` so these can be path-filtered: macOS runners
 # bill at ~10x linux, and a backend-only PR has no reason to spend one.
@@ -54,8 +50,6 @@ on:
       - 'RemWidget/**'
       - 'Shared/**'
       - 'Rem.xcodeproj/**'
-      - 'openclaw'
-      - '.gitmodules'
       - '**/*.entitlements'
       - '.github/workflows/build-apple.yml'
   pull_request:
@@ -73,8 +67,6 @@ on:
       - 'RemWidget/**'
       - 'Shared/**'
       - 'Rem.xcodeproj/**'
-      - 'openclaw'
-      - '.gitmodules'
       - '**/*.entitlements'
       - '.github/workflows/build-apple.yml'
 
@@ -101,25 +93,6 @@ jobs:
             destination: 'generic/platform=macOS'
     steps:
       - uses: actions/checkout@v4
-        with:
-          # THE LINE THAT CATCHES #1297. Without it the checkout has no OpenClawKit and every
-          # Swift file importing it fails with "cannot find type in scope".
-          submodules: recursive
-
-      # A missing or unresolved submodule should fail HERE, with a sentence a human can act on,
-      # rather than 40 lines down as six cryptic "cannot find type 'OpenClawChat…'" errors. That
-      # exact confusion cost a wrong diagnosis on 2026-08-11.
-      - name: Verify the openclaw submodule resolved
-        run: |
-          set -euo pipefail
-          if [ ! -f openclaw/apps/shared/OpenClawKit/Package.swift ]; then
-            echo "::error::openclaw submodule did not resolve — OpenClawKit is missing."
-            echo "OpenClawKit lives at openclaw/apps/shared/OpenClawKit and the app cannot compile"
-            echo "without it. Check that the gitlink exists (git ls-tree HEAD openclaw) and that"
-            echo "checkout ran with submodules: recursive."
-            exit 1
-          fi
-          echo "openclaw at $(git -C openclaw rev-parse --short HEAD)"
 
       # `set -o pipefail` is mandatory: piping xcodebuild through anything makes `$?` the pipe's
       # status, which has silently masked BUILD FAILED in this repo before. Not piped here, and
