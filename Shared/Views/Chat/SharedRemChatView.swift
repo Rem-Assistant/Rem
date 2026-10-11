@@ -1250,9 +1250,14 @@ struct SharedRemChatView: View {
     /// renders twice. We keep the later (server) copy. No-op for normal text
     /// sends, which the submodule already de-duplicates.
     private var visibleMessages: [RemChatMessage] {
+        Self.visibleMessages(from: viewModel.messages)
+    }
+
+    /// Pure form of `visibleMessages`, shared with the iOS design-system adapter.
+    static func visibleMessages(from messages: [RemChatMessage]) -> [RemChatMessage] {
         var result: [RemChatMessage] = []
-        result.reserveCapacity(viewModel.messages.count)
-        for message in viewModel.messages {
+        result.reserveCapacity(messages.count)
+        for message in messages {
             if message.role == "user",
                let previous = result.last,
                previous.role == "user",
@@ -1267,7 +1272,7 @@ struct SharedRemChatView: View {
     }
 
     /// Synthesized empty-text attachment body injected by the upstream send path.
-    private static func isSyntheticAttachmentPlaceholder(_ text: String) -> Bool {
+    static func isSyntheticAttachmentPlaceholder(_ text: String) -> Bool {
         MessageCleaner.cleanUserMessageText(text)
             .trimmingCharacters(in: .whitespacesAndNewlines) == "See attached."
     }
@@ -2291,8 +2296,8 @@ struct SharedRemChatView: View {
         .accessibilityIdentifier("FirstChatEmptyState")
     }
 
-    private static let emptyStateSubtitlePlain = "Say what you want Rem to help organize."
-    private static let emptyStateSubtitleWithStarters =
+    static let emptyStateSubtitlePlain = "Say what you want Rem to help organize."
+    static let emptyStateSubtitleWithStarters =
         "Try one of these, or say what you want Rem to help organize."
 
     // MARK: - Message Row
@@ -4111,18 +4116,11 @@ struct SharedRemChatView: View {
                 runtimeProviderAuthEvidence.canPresentProviderMenus)
     }
 
+    /// Shared with the design-system adapter through `ChatSendCoordinator`.
     private var effectiveModelSelectionID: String {
-        guard runtimeProviderAuthEvidence.canReconcileExplicitSelection(
-            viewModel.modelSelectionID
-        ) else {
-            return viewModel.modelSelectionID
-        }
-        return ModelPickerPolicy.effectiveSelectionID(
-            requestedSelectionID: viewModel.modelSelectionID,
-            models: viewModel.modelChoices,
-            catalogCompleteness: viewModel.modelCatalogCompleteness,
-            runtimeConfiguredProviderIDs: runtimeConfiguredProviderIDs,
-            defaultModelLabel: viewModel.defaultModelLabel
+        ChatSendCoordinator.effectiveModelSelectionID(
+            viewModel: viewModel,
+            providerEvidence: runtimeProviderAuthEvidence
         )
     }
 
@@ -4353,6 +4351,12 @@ struct SharedRemChatView: View {
     /// model's pending attachments (same compress + 5 MB path as photos).
     private func handleFileImport(_ result: Result<[URL], Error>) {
         guard case let .success(urls) = result else { return }
+        Self.importImageFiles(urls, into: viewModel)
+    }
+
+    /// Loads picked image files into `viewModel`'s pending attachments. Shared with the iOS
+    /// design-system adapter so both composers attach files through the same path.
+    static func importImageFiles(_ urls: [URL], into viewModel: RemChatViewModel) {
         Task { @MainActor in
             for (index, url) in urls.enumerated() {
                 let needsStop = url.startAccessingSecurityScopedResource()
@@ -4578,31 +4582,14 @@ struct SharedRemChatView: View {
     /// Send is enabled when the VM would allow it OR the cloud-browser chip is attached — the chip is
     /// content in its own right (it injects a directive on send), so it can send with an empty field.
     private var canSendComposer: Bool {
-        ChatComposerSendPolicy.canSend(
-            input: viewModel.input,
-            hasAuthoritativeProviderEvidence:
-                runtimeProviderAuthEvidence.canReconcileExplicitSelection(
-                    effectiveModelSelectionID
-                ),
-            // Upstream OpenClaw keeps its default chat usable independently of `models.list`.
-            // Rem's additional auth-evidence RPC is required only when honoring an explicit
-            // provider choice; an older/local upstream gateway that lacks that RPC must not
-            // strand Automatic chat.
-            requiresProviderEvidence:
-                effectiveModelSelectionID != RemChatViewModel.defaultModelSelectionID,
-            isPreparingSend: viewModel.isPreparingSend,
-            viewModelCanSend: viewModel.canSend,
+        ChatSendCoordinator.canSend(
+            viewModel: viewModel,
+            providerEvidence: runtimeProviderAuthEvidence,
             browserCapabilityAttached: browserCapabilityAttached)
     }
 
-    private var composerIsSessionCommand: Bool {
-        ChatComposerSendPolicy.isSessionCommand(viewModel.input)
-    }
-
     private var hasRequiredSendQuota: Bool {
-        ChatComposerSendPolicy.hasRequiredQuota(
-            input: viewModel.input,
-            hasQuota: hasQuota())
+        ChatSendCoordinator.hasRequiredQuota(viewModel: viewModel, hasQuota: hasQuota())
     }
 
     private var runtimeConfiguredProviderIDs: [String] {
@@ -4610,41 +4597,26 @@ struct SharedRemChatView: View {
     }
 
     private func sendIfReady() {
-        guard canSendComposer else { return }
-        guard hasRequiredSendQuota else { return }
+        // Gates and the synchronous payload snapshot live in `ChatSendCoordinator`, shared with the
+        // iOS design-system adapter so both surfaces send identically.
+        guard let request = ChatSendCoordinator.prepare(
+            viewModel: viewModel,
+            providerEvidence: runtimeProviderAuthEvidence,
+            browserCapabilityAttached: browserCapabilityAttached,
+            hasQuota: hasQuota
+        ) else { return }
         briefAnchorAllowsBottomFollowing = true
-
-        // Capture the full user-authorized payload now; model repair and quota can both suspend.
-        // Do not mutate the live composer in this synchronous callback path: TextField may still be
-        // committing, and any edit made during preparation belongs to the next draft.
-        // A session command remains exact control-plane input. Do not wrap it in the browser
-        // directive or consume a newly attached browser chip.
-        let browserCapabilityWasAttached = browserCapabilityAttached && !composerIsSessionCommand
         let browserCapabilityRevisionAtSend = browserCapabilityRevision
-        let messageSnapshot = browserCapabilityWasAttached
-            ? BrowserDirective.wrapChipSend(userText: viewModel.input)
-            : viewModel.input
-        let attachmentsSnapshot = viewModel.attachments
 
-        // Acceptance must happen in this same synchronous callback. Deferring the VM call through
-        // another Task would let a queued picker mutation or TextField commit run first, changing
-        // the model/thinking snapshot or making the old payload own a newer composer revision.
-        viewModel.send(
-            modelSelectionID: effectiveModelSelectionID,
-            message: messageSnapshot,
-            attachments: attachmentsSnapshot
+        // Acceptance must happen in this same synchronous callback (see `ChatSendCoordinator`).
+        ChatSendCoordinator.dispatch(
+            request,
+            viewModel: viewModel,
+            consumeSendSlot: consumeSendSlot
         ) {
-            // Model reconciliation owns the first network phase. Quota and composer state must
-            // change exactly once, only after that repair and all local dispatch guards
-            // succeed; otherwise a rejected reset/health check would charge the user.
-            if let consume = consumeSendSlot {
-                let ok = await consume()
-                guard ok else { return false }
-            }
-
             // Only consume the exact chip revision captured by this send. If the user detached
             // and reattached while model repair/quota was pending, the new chip remains.
-            if browserCapabilityWasAttached,
+            if request.consumesBrowserCapability,
                browserCapabilityAttached,
                browserCapabilityRevision == browserCapabilityRevisionAtSend
             {
@@ -4659,7 +4631,6 @@ struct SharedRemChatView: View {
             cachedStreamingText = nil
             cachedStreamingOriginUserAnchor = nil
             onAfterSend?()
-            return true
         }
     }
 

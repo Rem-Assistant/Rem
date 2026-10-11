@@ -67,9 +67,36 @@ struct RemChatView: View {
     var onOpenDeviceConnections: (() -> Void)?
     var onRetryConnection: (() -> Void)?
     var runLifecycleEvidenceStore: RunLifecycleEvidenceStore?
+    /// The app's loaded tasks as plain values, read only by the design-system chat (DEBUG
+    /// `--rem-ds-chat`): a task chat's header state and the Agent activity history. Empty by default.
+    var designSystemTaskRecords: () -> [DesignSystemTaskRecord] = { [] }
 
     /// Bumped after sending a message to force sessionDisplayName to re-evaluate.
     @State private var sessionNameRefresh: Int = 0
+    /// Set when the design-system chat hands this conversation back to the classic surface.
+    @State private var usesClassicChat = false
+
+    /// DEBUG launch argument that renders ordinary and task chats through the canonical design
+    /// system's `ChatScreen` (`Rem/Sources/DesignSystemAdapter/`). Release builds always use the
+    /// classic chat.
+    static let designSystemChatLaunchArgument = DesignSystemAdapterFlag.launchArgument
+
+    private static let isDesignSystemChatEnabled: Bool = DesignSystemAdapterFlag.isEnabled
+
+    /// Ordinary and task chats (phase 2: task chats use the same send path, which the transport
+    /// routes to the task continuation). The durable brief conversation, voice and anything the
+    /// adapter has handed back stay on the classic surface.
+    private var rendersDesignSystemChat: Bool {
+        guard Self.isDesignSystemChatEnabled, !usesClassicChat else { return false }
+        let sessionKey = requestedSessionKey ?? viewModel.sessionKey
+        return !BriefContext.isDurableOrchestratorSession(sessionKey)
+            && orchestratorSuggestionSnapshot == nil
+            && briefPreviewMarkdown == nil
+            && resolvedBriefMarkdown.wrappedValue == nil
+            && !scrollToLatestBrief
+            && !isTalkModeActive
+            && !autoStartVoice
+    }
 
     private var hasQuota: Bool {
         usageService.hasQuotaForUI
@@ -93,6 +120,70 @@ struct RemChatView: View {
     }
 
     var body: some View {
+        chatSurface
+            .task(id: providerEvidenceTaskID) {
+                await refreshProviderEvidence()
+            }
+            .task {
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(for: .seconds(60))
+                    } catch {
+                        return
+                    }
+                    providerEvidenceRefreshRevision &+= 1
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    providerEvidenceRefreshRevision &+= 1
+                }
+            }
+            .task { try? await usageService.fetchSummary() }
+            // Voice mini-player bar is rendered by the shared view via
+            // onEndVoice/voiceStatusText/voiceIsMuted inputs.
+    }
+
+    @ViewBuilder
+    private var chatSurface: some View {
+        if rendersDesignSystemChat {
+            RemChatScreenAdapter(
+                viewModel: viewModel,
+                providerEvidence: runtimeProviderAuthEvidence,
+                connectionState: gatewayConnectionState,
+                runtimeOwnsConversation: runtimeOwnsConversation,
+                isFreshConversation: isFreshConversation,
+                initialExistingSessionTitle: initialExistingSessionTitle,
+                requestedSessionKey: requestedSessionKey,
+                starters: starterPrompts,
+                hasQuota: { usageService.hasQuotaForUI },
+                quotaReason: usageService.quotaPresentation.bannerText,
+                consumeSendSlot: { @MainActor in
+                    await consumeQuotaSlot()
+                },
+                onAfterSend: { handleAfterSend() },
+                onVoice: onVoiceTap,
+                onUseClassicChat: { usesClassicChat = true },
+                modelsSettingsDestination: { modelsSettingsScreen() },
+                taskRecords: designSystemTaskRecords
+            )
+        } else {
+            classicChat
+        }
+    }
+
+    /// The gateway-backed Models page behind the composer picker's Manage Models footer, shared by
+    /// the classic chat and the design-system adapter.
+    private func modelsSettingsScreen() -> AnyView {
+        AnyView(SharedModelsSettingsScreen(
+            gateway: gateway,
+            runtimeProviderAuthEvidence: runtimeProviderAuthEvidence
+        ) {
+            viewModel.refresh()
+        })
+    }
+
+    private var classicChat: some View {
         SharedRemChatView(
             viewModel: viewModel,
             starterPrompts: starterPrompts,
@@ -116,14 +207,7 @@ struct RemChatView: View {
             runtimeOwnsConversation: runtimeOwnsConversation,
             briefAccountID: gateway.authenticatedAccountIDForRecovery,
             runtimeProviderAuthEvidence: runtimeProviderAuthEvidence,
-            modelsSettingsDestination: {
-                AnyView(SharedModelsSettingsScreen(
-                    gateway: gateway,
-                    runtimeProviderAuthEvidence: runtimeProviderAuthEvidence
-                ) {
-                    viewModel.refresh()
-                })
-            },
+            modelsSettingsDestination: { modelsSettingsScreen() },
             isFreshConversation: isFreshConversation,
             initialExistingSessionTitle: initialExistingSessionTitle,
             requestedSessionKey: requestedSessionKey,
@@ -150,19 +234,7 @@ struct RemChatView: View {
             voiceAutoCloseAt: talkMode?.autoCloseAt,
             voiceAutoCloseCountdownDuration: talkMode?.voiceAutoCloseCountdownDuration ?? 30,
             onKeepVoiceOpen: { talkMode?.keepVoiceOpen() },
-            onAfterSend: {
-                if let tm = talkMode, tm.isEnabled {
-                    tm.speakNextResponse()
-                }
-                // Force nav title to re-read after the transport auto-names.
-                // Note: NOT done synchronously here (would trigger "Modifying
-                // state during view update" — this runs on a background Task
-                // whose continuation resumes on the next runloop tick).
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(200))
-                    sessionNameRefresh += 1
-                }
-            },
+            onAfterSend: { handleAfterSend() },
             sessionPreviewContext: sessionPreviewContext,
             onOpenDeviceConnections: onOpenDeviceConnections,
             onRetryConnection: onRetryConnection,
@@ -173,62 +245,61 @@ struct RemChatView: View {
                 SessionDisplayNames.setName(name, for: key)
             }
         )
-        .task(id: providerEvidenceTaskID) {
-            let sessionGeneration = gateway.operatorSessionGeneration
-            let scopeID = ([String(sessionGeneration)] + providerCandidateIDs)
-                .joined(separator: "|")
-            let priorSameScopeEvidence = providerEvidenceScopeID == scopeID
-                ? runtimeProviderAuthEvidence
-                : nil
-            let lastVerified = priorSameScopeEvidence?.hasAuthoritativeSnapshot == true
-                ? priorSameScopeEvidence?.effectiveProviderIDs
-                : nil
-            providerEvidenceScopeID = scopeID
-            runtimeProviderAuthEvidence = priorSameScopeEvidence?.beginningSameScopeRefresh
-                ?? .loading(lastVerifiedProviderIDs: nil)
-            guard gateway.operatorReady else {
-                runtimeProviderAuthEvidence = .failed(lastVerifiedProviderIDs: lastVerified)
-                return
-            }
-            do {
-                let loaded = try await gateway.loadRuntimeConfiguredProviderIDs(
-                    candidateProviderIDs: providerCandidateIDs)
-                guard !Task.isCancelled,
-                      gateway.operatorReady,
-                      gateway.operatorSessionGeneration == sessionGeneration,
-                      providerEvidenceScopeID == scopeID
-                else { return }
-                runtimeProviderAuthEvidence = .verified(loaded)
-            } catch {
-                guard !Task.isCancelled,
-                      gateway.operatorReady,
-                      gateway.operatorSessionGeneration == sessionGeneration,
-                      providerEvidenceScopeID == scopeID
-                else { return }
-                runtimeProviderAuthEvidence = .resolvingLoadFailure(
-                    error,
-                    priorSameScopeEvidence: priorSameScopeEvidence
-                )
-            }
+    }
+
+    /// Runs after the send path accepts a message (both chat surfaces).
+    private func handleAfterSend() {
+        if let tm = talkMode, tm.isEnabled {
+            tm.speakNextResponse()
         }
-        .task {
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(60))
-                } catch {
-                    return
-                }
-                providerEvidenceRefreshRevision &+= 1
-            }
+        // Force nav title to re-read after the transport auto-names.
+        // Note: NOT done synchronously here (would trigger "Modifying
+        // state during view update" — this runs on a background Task
+        // whose continuation resumes on the next runloop tick).
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            sessionNameRefresh += 1
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                providerEvidenceRefreshRevision &+= 1
-            }
+    }
+
+    /// Loads gateway model-auth evidence for the current operator session and candidate providers.
+    private func refreshProviderEvidence() async {
+        let sessionGeneration = gateway.operatorSessionGeneration
+        let scopeID = ([String(sessionGeneration)] + providerCandidateIDs)
+            .joined(separator: "|")
+        let priorSameScopeEvidence = providerEvidenceScopeID == scopeID
+            ? runtimeProviderAuthEvidence
+            : nil
+        let lastVerified = priorSameScopeEvidence?.hasAuthoritativeSnapshot == true
+            ? priorSameScopeEvidence?.effectiveProviderIDs
+            : nil
+        providerEvidenceScopeID = scopeID
+        runtimeProviderAuthEvidence = priorSameScopeEvidence?.beginningSameScopeRefresh
+            ?? .loading(lastVerifiedProviderIDs: nil)
+        guard gateway.operatorReady else {
+            runtimeProviderAuthEvidence = .failed(lastVerifiedProviderIDs: lastVerified)
+            return
         }
-        .task { try? await usageService.fetchSummary() }
-        // Voice mini-player bar is rendered by the shared view via
-        // onEndVoice/voiceStatusText/voiceIsMuted inputs.
+        do {
+            let loaded = try await gateway.loadRuntimeConfiguredProviderIDs(
+                candidateProviderIDs: providerCandidateIDs)
+            guard !Task.isCancelled,
+                  gateway.operatorReady,
+                  gateway.operatorSessionGeneration == sessionGeneration,
+                  providerEvidenceScopeID == scopeID
+            else { return }
+            runtimeProviderAuthEvidence = .verified(loaded)
+        } catch {
+            guard !Task.isCancelled,
+                  gateway.operatorReady,
+                  gateway.operatorSessionGeneration == sessionGeneration,
+                  providerEvidenceScopeID == scopeID
+            else { return }
+            runtimeProviderAuthEvidence = .resolvingLoadFailure(
+                error,
+                priorSameScopeEvidence: priorSameScopeEvidence
+            )
+        }
     }
 
     private func toggleVoiceMute() {

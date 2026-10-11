@@ -1120,7 +1120,15 @@ struct RemMainTabView: View {
     private var inboxContent: some View {
         Group {
             if let vm = inboxViewModel {
-                InboxView(viewModel: vm)
+                if DesignSystemAdapterFlag.isEnabled {
+                    // DEBUG `--rem-ds-chat`: the design system's Inbox; a row opens the same task
+                    // detail destination as the classic row's `NavigationLink(value: task.id)`.
+                    RemInboxScreenAdapter(viewModel: vm) { taskID in
+                        navigationPath.append(taskID)
+                    }
+                } else {
+                    InboxView(viewModel: vm)
+                }
             } else {
                 ProgressView()
             }
@@ -1276,7 +1284,10 @@ struct RemMainTabView: View {
                         navigationPath.append("device_connections")
                     },
                     onRetryConnection: retryGatewayConnection,
-                    runLifecycleEvidenceStore: runLifecycleEvidenceStore
+                    runLifecycleEvidenceStore: runLifecycleEvidenceStore,
+                    designSystemTaskRecords: {
+                        taskStore?.allTasks.map { TaskDisplayMapper.record($0) } ?? []
+                    }
                 )
                 // Re-run when the *instance* changes, not only the session key:
                 // opening a fresh chat sets `gateway.mainSessionKey`, whose onChange

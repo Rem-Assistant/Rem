@@ -5,10 +5,9 @@ import SwiftData
 
 /// Flagship-Agenda README fixture. Drives the REAL `AgendaView` + `AgendaViewModel`
 /// with an in-memory store of mock tasks, a mock Daily Brief (header + suggestions),
-/// and the REAL main bottom toolbar (`remMainBottomToolbar`, the same controls
-/// `RemMainTabView` shows) inside a real `.bottomBar` toolbar group — so the captured
-/// screenshot matches the signed-in app (calendar header, brief header, sort control,
-/// Overdue section, Add New / Schedule, Suggestions, and the authentic tab bar chrome).
+/// so the captured screenshot matches the signed-in app (calendar header, brief header, sort
+/// control, Overdue section, Add New / Schedule, Suggestions). The bottom tab bar chrome is not
+/// drawn: its builder is not in the public repo.
 /// 100% mock data: no account, no network, no real names/emails.
 ///
 /// Launch arg: `--rem-agenda-fixture`.
@@ -61,24 +60,8 @@ struct ReadmeAgendaFullFixtureView: View {
             )
             .modelContainer(container)
             .toolbar(.hidden, for: .navigationBar)
-            // Drive the REAL toolbar the app shows on the Agenda tab (hamburger ·
-            // new-chat · plus), not a hand-drawn copy. Agenda tab, no active session,
-            // first-use hint suppressed — inert closures (the fixture never navigates).
-            .toolbar {
-                ToolbarItemGroup(placement: .bottomBar) {
-                    remMainBottomToolbar(
-                        selectedTab: .agenda,
-                        hasActiveSession: false,
-                        firstUseHintPresented: .constant(false),
-                        onSelectTab: { _ in },
-                        onNewChat: {},
-                        onDismissFirstUseHint: {},
-                        onCreateTask: {},
-                        onNewFolder: {},
-                        onNewList: {}
-                    )
-                }
-            }
+            // The main bottom toolbar is not drawn here: its builder (`remMainBottomToolbar`) was never
+            // part of the public export, and the app's own toolbar is private to ContentView.
         }
     }
 

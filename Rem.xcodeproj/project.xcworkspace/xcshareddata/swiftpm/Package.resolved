@@ -82,6 +82,14 @@
       }
     },
     {
+      "identity" : "rem-design-system",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Rem-Assistant/Rem-Design-System",
+      "state" : {
+        "revision" : "8b05bcf933dc49bdb84d4ff25be426c012514e85"
+      }
+    },
+    {
       "identity" : "sparkle",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sparkle-project/Sparkle",

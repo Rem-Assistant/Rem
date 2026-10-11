@@ -14,6 +14,7 @@ collapse into the same chat.
 
 | Folder | Description |
 |--------|-------------|
+| [Sources/DesignSystemAdapter](Sources/DesignSystemAdapter/) | Thin adapter onto the canonical Rem design system package |
 | [Sources/Gateway](Sources/Gateway/) | Dual WebSocket sessions (node + operator), credential storage, AI tool routing |
 | [Sources/Onboarding](Sources/Onboarding/) | First-launch sign-in, gateway deploy, permissions, data-sharing consent |
 | [Sources/Screens](Sources/Screens/) | Main app screens: agenda, inbox, task detail, focus sessions |
