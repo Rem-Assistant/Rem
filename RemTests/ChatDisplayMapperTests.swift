@@ -245,7 +245,7 @@ struct ChatDisplayMapperTests {
         #expect(working.activity == "Working")
         #expect(!working.showsCall)
         #expect(!working.showsOverflow)
-        #expect(!working.showsActivityDetails)
+        #expect(working.showsActivityDetails)
 
         let pairing = ChatDisplayMapper.header(
             connectionState: .pairingRequired, runtimeOwnsConversation: false, pendingRunCount: 0, voiceAvailable: true)

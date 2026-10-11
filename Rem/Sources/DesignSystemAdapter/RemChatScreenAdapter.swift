@@ -4,10 +4,11 @@ import UniformTypeIdentifiers
 import RemChatUI
 import RemDesignSystem
 
-/// Phase 1b of the design-system adapter: an ordinary chat rendered through the canonical
+/// The design-system chat: an ordinary or task chat rendered through the canonical
 /// `RemDesignSystem.ChatScreen`, driven by the same `RemChatViewModel` and the same send path as the
-/// classic `SharedRemChatView` (`ChatSendCoordinator`). Reached only from `RemChatView` in DEBUG builds
-/// launched with `--rem-ds-chat`.
+/// classic `SharedRemChatView` (`ChatSendCoordinator`; the transport routes a task session's turns to
+/// the task continuation). The header capsule pushes `RemDesignSystem.AgentActivityScreen`. Reached
+/// only from `RemChatView` in DEBUG builds launched with `--rem-ds-chat`.
 ///
 /// What the design system does not yet draw stays truthful: tool-result cards render with the app's
 /// own `ToolResultCardView`; activity timelines, attachments in sent messages and unknown message
@@ -37,6 +38,9 @@ struct RemChatScreenAdapter: View {
     /// The gateway-backed Models destination the classic picker's Manage Models footer presents
     /// (`SharedRemChatView.modelsSettingsDestination`); nil falls back to the same local view.
     let modelsSettingsDestination: (() -> AnyView)?
+    /// The app's loaded tasks (`TaskStore.allTasks`): a task chat's run state and the Agent activity
+    /// history. Read only; nothing is fetched.
+    let taskRecords: () -> [DesignSystemTaskRecord]
 
     @State private var isComposerFocused = false
     @State private var showsFileImporter = false
@@ -47,6 +51,8 @@ struct RemChatScreenAdapter: View {
     @State private var selectedText: SelectedTextItem?
     /// Mirrors the classic chat's first-load gate: set once the requested session's history settled.
     @State private var completedInitialHistoryLoad = false
+    @State private var showsAgentActivity = false
+    @State private var agentActivityTab: RemDesignSystem.AgentActivityTab = .activity
 
     private struct MessageActionsTarget: Identifiable {
         let id: String
@@ -80,12 +86,8 @@ struct RemChatScreenAdapter: View {
             ),
             showsModelPicker: viewModel.showsModelPicker
         )
-        let header: RemDesignSystem.ChatHeaderDisplay = ChatDisplayMapper.header(
-            connectionState: connectionState,
-            runtimeOwnsConversation: runtimeOwnsConversation,
-            pendingRunCount: viewModel.pendingRunCount,
-            voiceAvailable: voiceAvailable
-        )
+        let records: [DesignSystemTaskRecord] = taskRecords()
+        let header: RemDesignSystem.ChatHeaderDisplay = makeHeader(records: records, voiceAvailable: voiceAvailable)
         let composer: RemDesignSystem.ChatComposerState = ChatDisplayMapper.composer(
             draft: viewModel.input,
             attachments: viewModel.attachments,
@@ -135,6 +137,12 @@ struct RemChatScreenAdapter: View {
             guard case let .success(urls) = result else { return }
             SharedRemChatView.importImageFiles(urls, into: viewModel)
         }
+        .navigationDestination(isPresented: $showsAgentActivity) {
+            RemDesignSystem.AgentActivityScreen(
+                TaskDisplayMapper.agentActivity(header: header, records: records),
+                selection: $agentActivityTab
+            )
+        }
         .sheet(isPresented: $showsModelsSheet) {
             modelsSheet
         }
@@ -176,6 +184,7 @@ struct RemChatScreenAdapter: View {
             presentAttachmentImporter: { showsFileImporter = true },
             presentMessageActions: { actionsTarget = MessageActionsTarget(id: $0) },
             presentModelSettings: { showsModelsSheet = true },
+            presentAgentActivity: { showsAgentActivity = true },
             starterText: { id in starters.first(where: { $0.id == id })?.text },
             messageText: { id in transcript.message(id: id)?.text }
         )
@@ -251,6 +260,28 @@ struct RemChatScreenAdapter: View {
     }
 
     // MARK: State
+
+    /// A task chat shows the task's reported run state; an ordinary chat the gateway/agent state.
+    private func makeHeader(
+        records: [DesignSystemTaskRecord],
+        voiceAvailable: Bool
+    ) -> RemDesignSystem.ChatHeaderDisplay {
+        if let taskID = TaskChatSessionIdentity.taskId(from: requestedSessionKey ?? viewModel.sessionKey) {
+            let state: RemDesignSystem.InboxItemState? = TaskDisplayMapper.record(forTaskID: taskID, in: records)
+                .map { TaskDisplayMapper.inboxState($0) }
+            return TaskDisplayMapper.taskChatHeader(
+                state: state,
+                pendingRunCount: viewModel.pendingRunCount,
+                voiceAvailable: voiceAvailable
+            )
+        }
+        return ChatDisplayMapper.header(
+            connectionState: connectionState,
+            runtimeOwnsConversation: runtimeOwnsConversation,
+            pendingRunCount: viewModel.pendingRunCount,
+            voiceAvailable: voiceAvailable
+        )
+    }
 
     private var isAwaitingProviderEvidence: Bool {
         let selectionID = ChatSendCoordinator.effectiveModelSelectionID(

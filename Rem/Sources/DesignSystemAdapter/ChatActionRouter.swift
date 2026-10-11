@@ -21,10 +21,12 @@ import UIKit
 /// | `ChatModelMenu` `onSelect` (`selectModel`) | `RemChatViewModel.selectModel(_:)` with the classic picker's selection id (Automatic = `defaultModelSelectionID`) |
 /// | `ChatModelMenu` `onManageModels` (`manageModels`) | presents the classic Manage Models sheet (`RemChatView`'s gateway-backed Models destination) |
 ///
+/// | `activityDetails` | pushes `AgentActivityScreen` (the header's current state, finished task runs) |
+///
 /// The model menu reports through `ChatModelMenu`'s closures, not a `ChatScreenAction` case.
 ///
-/// Not routed (the adapter never offers them): overflow, activity details, reply context, retry,
-/// reactions, Mark as unread and Report.
+/// Not routed (the adapter never offers them): overflow, reply context, retry, reactions, Mark as
+/// unread and Report.
 struct ChatActionRouter {
     /// What a message action asks the adapter to present next.
     enum Presentation: Equatable {
@@ -46,6 +48,7 @@ struct ChatActionRouter {
     let presentAttachmentImporter: () -> Void
     let presentMessageActions: (String) -> Void
     let presentModelSettings: () -> Void
+    let presentAgentActivity: () -> Void
     let starterText: (String) -> String?
     let messageText: (String) -> String?
 
@@ -55,8 +58,10 @@ struct ChatActionRouter {
             dismiss()
         case .call:
             onVoice?()
-        case .overflow, .activityDetails, .dismissReplyContext:
-            // Hidden in phase 1b; nothing to route.
+        case .activityDetails:
+            presentAgentActivity()
+        case .overflow, .dismissReplyContext:
+            // Never offered; nothing to route.
             break
         case .starter(let id):
             guard let text = starterText(id) else { return }

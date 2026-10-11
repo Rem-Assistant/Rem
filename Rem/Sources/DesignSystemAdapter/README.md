@@ -10,12 +10,15 @@
 
 ```
 DesignSystemAdapter/
-├── RemChatScreenAdapter.swift   # Phase 1b: ordinary chat through RemDesignSystem.ChatScreen
+├── DesignSystemAdapterFlag.swift # The DEBUG `--rem-ds-chat` launch flag behind every surface below
+├── RemChatScreenAdapter.swift   # Ordinary and task chat through ChatScreen; Agent activity from the header
 ├── ChatDisplayMapper.swift      # Pure app state → DS values (header, composer, transcript, empty state)
-└── ChatActionRouter.swift       # DS actions → existing app calls (send path, abort, voice, sheet rows)
+├── ChatActionRouter.swift       # DS actions → existing app calls (send path, abort, voice, sheet rows)
+├── RemInboxScreenAdapter.swift  # Phase 2: the Inbox through InboxScreen
+└── TaskDisplayMapper.swift      # Pure tasks → DS values (Inbox rows, task chat header, Agent activity)
 ```
 
-Tests: `RemTests/ChatDisplayMapperTests.swift`.
+Tests: `RemTests/ChatDisplayMapperTests.swift`, `RemTests/TaskDisplayMapperTests.swift`.
 
 ## Rules
 
@@ -32,21 +35,22 @@ Tests: `RemTests/ChatDisplayMapperTests.swift`.
   label anything the design system cannot show yet as shown in the classic chat, with a button that
   hands the conversation back.
 
-## Chat (phase 1b)
+## Chat (phases 1b and 2)
 
 Launch a DEBUG build with `--rem-ds-chat` (Product → Scheme → Edit Scheme → Run → Arguments).
-`RemChatView` then renders `RemChatScreenAdapter` for **ordinary** chats only. These stay on the classic
-`SharedRemChatView`: task chats (`runtimeOwnsConversation` / task session keys), the durable brief
-conversation (brief preview, resolved brief, suggestion snapshot, scroll-to-brief), voice (talk mode
-active or auto-start), and any conversation the person handed back with **Open classic chat**. Release
-builds never read the flag.
+`RemChatView` then renders `RemChatScreenAdapter` for ordinary chats and, since phase 2, **task chats**
+(`rem-task-<uuid>` session keys, `runtimeOwnsConversation`). These stay on the classic
+`SharedRemChatView`: the durable brief conversation (brief preview, resolved brief, suggestion
+snapshot, scroll-to-brief), voice (talk mode active or auto-start), and any conversation the person
+handed back with **Open classic chat**. The same flag switches the Inbox tab (below). Release builds
+never read the flag (`DesignSystemAdapterFlag`).
 
 | Design system | From the app |
 |---|---|
-| `ChatHeaderDisplay.activity` | `Working` while `pendingRunCount > 0`, else `GatewayConnectionState.shortStatusText` (`Connected` for runtime-owned chats) |
+| `ChatHeaderDisplay.activity` | `Working` while `pendingRunCount > 0`, else `GatewayConnectionState.shortStatusText` (`Connected` for runtime-owned chats); task chats: see below |
 | `ChatHeaderDisplay.status` | `.needsYou` only when `needsDeviceRePair`, else `.connected` |
 | `ChatHeaderDisplay.isWorking` | `pendingRunCount > 0` |
-| `showsBack` / `showsOverflow` / `showsActivityDetails` | `true` / `false` / `false` (no overflow or activity routes yet) |
+| `showsBack` / `showsOverflow` / `showsActivityDetails` | `true` / `false` / `true` (no overflow route; the capsule opens Agent activity) |
 | `showsCall` | voice hook present and quota available |
 | `ChatComposerState.draft` | `RemChatViewModel.input` |
 | `attachments` | `RemPendingAttachment`: id = UUID string, title = file name, `image/*` → `.image`, else `.file` |
@@ -74,6 +78,7 @@ builds never read the flag.
 | `composer(.removeAttachment)` | `RemChatViewModel.removeAttachment(_:)` |
 | `composer(.speak)`, `call` | `RemChatView.onVoiceTap` (starting voice switches to the classic surface, which owns the voice UI) |
 | `back` | `dismiss` |
+| `activityDetails` | pushes `AgentActivityScreen` (`navigationDestination(isPresented:)` on the app's `NavigationStack`) |
 | `starter` | fills the draft and focuses it, like the classic starters |
 | `transcript(.requestActions)` | `RemDesignSystem.MessageActionSheet` with Reply, Copy, Select Text; no reactions |
 | Reply / Copy / Select Text | quote into the draft / `UIPasteboard` / a selectable text sheet |
@@ -86,6 +91,58 @@ preparing or sending a message closes it), so it can offer Automatic while an ex
 provider evidence; the design-system surface cannot until the design system lets the host enable the
 menu separately.
 
+## Task chat (phase 2)
+
+A task chat is the same `ChatScreen` with the same send path: `ChatSendCoordinator` →
+`RemChatTransport`, which routes a `rem-task-<uuid>` session's turns to the task continuation
+(`TaskChatTranscriptCoordinator`), and `RemChatView.consumeQuotaSlot` already skips the gateway slot
+for task sessions. Nothing about sending changes. Only the header differs, from the task's own run
+state (`TaskStore.allTasks`, passed to `RemChatView.designSystemTaskRecords` as plain
+`DesignSystemTaskRecord`s):
+
+| Design system | From the app |
+|---|---|
+| `ChatHeaderDisplay` | `Working` (thinking face) while `pendingRunCount > 0`; else `InboxItemState.header` for the task's state (table below), the same truth its Inbox row shows; `Connected` when the task is not loaded |
+| `showsBack` / `showsOverflow` / `showsActivityDetails` / `showsCall` | `true` / `false` / `true` / voice hook present and quota available |
+
+Like the classic chat, the add button stays available although the task transport rejects attachments
+("Task conversations do not support attachments yet."); the design-system composer has no way to hide it.
+
+## Inbox (phase 2)
+
+With the flag, `ContentView`'s Inbox tab renders `RemInboxScreenAdapter` over the same
+`InboxViewModel.unscheduledTasks` instead of `InboxView`.
+
+| Design system | From the app |
+|---|---|
+| `InboxItemDisplay.id` | the task's UUID string |
+| `title` | `TaskEvent.title` (`Untitled task` when blank) |
+| `state` (`InboxItemState`) | completed task → `.completed`; no run status or `idle` → `.none`; `running` → `.executing`; `review`, `blocked` → `.blocked` (Needs you; never `.needsApproval`, the app has no approval for it); `done` → `.completed`; unrecognized → `.unknown` |
+| `empty` | `RemContentUnavailableView` with the classic copy (Inbox is empty / Tasks you capture will appear here) |
+
+| Action | App call |
+|---|---|
+| `InboxAction.open` | `navigationPath.append(task.id)`: the classic row's `NavigationLink(value:)` destination, task detail, from which the existing task chat opens |
+| pull to refresh | `InboxViewModel.pullToRefresh()` |
+
+Not offered (no design-system equivalent yet): the classic swipe actions (complete, snooze, delete), inline
+scheduling and calendar info on rows, and the hydrating skeleton.
+
+## Agent activity (phase 2)
+
+The chat header capsule (ordinary and task chats) pushes `AgentActivityScreen`.
+
+| Design system | From the app |
+|---|---|
+| `AgentActivityDisplay.current` | `AgentActivityCurrent(header)`: exactly the chat header's state, never derived from history |
+| `days` | finished agent runs on loaded tasks: `runStatus` `review` / `blocked` / `done` with a `runStartedAt`, newest first, grouped by the run's start day (Today, Yesterday, then a short date) |
+| `AgentActivityEvent` | id = task UUID, title = task title, outcome = `TaskRunStatus.displayName` (Done, Needs review, Needs attention), time = `Started <short time>`: the app records only when a run started, so no finish time is shown |
+| Approvals tab | the design system's labelled data gap (the app has no approvals data) |
+
+No new data is fetched: the app has no agent-level activity feed, so the timeline is what the loaded
+tasks already carry. With no finished runs the design system's empty state shows. Per-task comment
+threads (`TaskActivityHistoryView`) stay in task detail; rows are not interactive.
+
 ## Phases
 
 1. **1a:** add the package and a probe view (removed in 1b; the Chat adapter supersedes it).
@@ -93,5 +150,5 @@ menu separately.
    reusing the existing send path unchanged.
 3. **1c:** the model menu (done: wired to the classic picker's policy and calls); the long-press
    message sheet's remaining rows.
-4. **2:** task chat, Inbox, Agent activity.
+4. **2:** task chat, Inbox, Agent activity (done, behind the same flag).
 5. **3:** Settings.

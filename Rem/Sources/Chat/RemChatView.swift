@@ -67,32 +67,29 @@ struct RemChatView: View {
     var onOpenDeviceConnections: (() -> Void)?
     var onRetryConnection: (() -> Void)?
     var runLifecycleEvidenceStore: RunLifecycleEvidenceStore?
+    /// The app's loaded tasks as plain values, read only by the design-system chat (DEBUG
+    /// `--rem-ds-chat`): a task chat's header state and the Agent activity history. Empty by default.
+    var designSystemTaskRecords: () -> [DesignSystemTaskRecord] = { [] }
 
     /// Bumped after sending a message to force sessionDisplayName to re-evaluate.
     @State private var sessionNameRefresh: Int = 0
     /// Set when the design-system chat hands this conversation back to the classic surface.
     @State private var usesClassicChat = false
 
-    /// DEBUG launch argument that renders ordinary chats through the canonical design system's
-    /// `ChatScreen` (`Rem/Sources/DesignSystemAdapter/`). Release builds always use the classic chat.
-    static let designSystemChatLaunchArgument = "--rem-ds-chat"
+    /// DEBUG launch argument that renders ordinary and task chats through the canonical design
+    /// system's `ChatScreen` (`Rem/Sources/DesignSystemAdapter/`). Release builds always use the
+    /// classic chat.
+    static let designSystemChatLaunchArgument = DesignSystemAdapterFlag.launchArgument
 
-    private static let isDesignSystemChatEnabled: Bool = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains(designSystemChatLaunchArgument)
-        #else
-        false
-        #endif
-    }()
+    private static let isDesignSystemChatEnabled: Bool = DesignSystemAdapterFlag.isEnabled
 
-    /// Ordinary chat only. Task chats, the durable brief conversation, voice and anything the adapter
-    /// has handed back stay on the classic surface.
+    /// Ordinary and task chats (phase 2: task chats use the same send path, which the transport
+    /// routes to the task continuation). The durable brief conversation, voice and anything the
+    /// adapter has handed back stay on the classic surface.
     private var rendersDesignSystemChat: Bool {
         guard Self.isDesignSystemChatEnabled, !usesClassicChat else { return false }
         let sessionKey = requestedSessionKey ?? viewModel.sessionKey
-        return !runtimeOwnsConversation
-            && !BriefContext.isDurableOrchestratorSession(sessionKey)
-            && TaskChatSessionIdentity.taskId(from: viewModel.sessionKey) == nil
+        return !BriefContext.isDurableOrchestratorSession(sessionKey)
             && orchestratorSuggestionSnapshot == nil
             && briefPreviewMarkdown == nil
             && resolvedBriefMarkdown.wrappedValue == nil
@@ -167,7 +164,8 @@ struct RemChatView: View {
                 onAfterSend: { handleAfterSend() },
                 onVoice: onVoiceTap,
                 onUseClassicChat: { usesClassicChat = true },
-                modelsSettingsDestination: { modelsSettingsScreen() }
+                modelsSettingsDestination: { modelsSettingsScreen() },
+                taskRecords: designSystemTaskRecords
             )
         } else {
             classicChat

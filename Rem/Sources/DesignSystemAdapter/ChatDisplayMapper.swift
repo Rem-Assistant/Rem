@@ -77,8 +77,8 @@ enum ChatDisplayMapper {
 
     /// Header for an ordinary chat. `activity` is agent-lifecycle copy: Working while a run is in
     /// flight, otherwise the gateway's short status. `needsYou` only when the device must be
-    /// re-approved. Overflow and activity details are hidden: phase 1b routes neither. The call entry
-    /// appears only when the app can start in-app voice.
+    /// re-approved. Overflow is hidden (no route); the capsule opens Agent activity (phase 2). The call
+    /// entry appears only when the app can start in-app voice.
     static func header(
         connectionState: GatewayConnectionState,
         runtimeOwnsConversation: Bool,
@@ -101,7 +101,7 @@ enum ChatDisplayMapper {
             isWorking: isWorking,
             showsBack: true,
             showsOverflow: false,
-            showsActivityDetails: false,
+            showsActivityDetails: true,
             showsCall: voiceAvailable
         )
     }
